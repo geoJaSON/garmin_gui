@@ -42,3 +42,36 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 #login input, #login button { padding: 9px 10px; font-size: 14px; }
 #login button { background: #2563eb; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
 .error { color: #dc2626; }
+
+#drawer {
+  position: absolute; top: 0; left: 0; z-index: 6; height: 100%;
+  width: 360px; background: #fff; box-shadow: 2px 0 8px rgba(0,0,0,.25);
+  padding: 16px; overflow-y: auto;
+}
+#drawer h2 { margin: 4px 0 14px; font-size: 16px; }
+#drawer-close {
+  float: right; border: 0; background: none; font-size: 22px;
+  cursor: pointer; line-height: 1; color: #888;
+}
+.fld { display: block; margin: 10px 0; font-size: 13px; color: #444; }
+.fld select, .fld input[type=file] { display: block; width: 100%; margin-top: 4px; }
+#params { margin: 14px 0; }
+#params summary { cursor: pointer; font-size: 13px; }
+#params .muted { font-size: 12px; }
+#params-body {
+  max-height: 320px; overflow-y: auto; margin: 10px 0;
+  border: 1px solid #eee; border-radius: 4px; padding: 8px;
+}
+.pfld { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 12px; }
+.pfld label { flex: 1; color: #555; word-break: break-all; }
+.pfld input[type=text], .pfld input[type=number] { width: 110px; }
+#run-btn {
+  width: 100%; padding: 10px; margin-top: 8px; border: 0; border-radius: 4px;
+  background: #16a34a; color: #fff; font-size: 14px; cursor: pointer;
+}
+#run-btn:disabled { background: #9ca3af; cursor: default; }
+#params-reset { font-size: 12px; margin-top: 4px; }
+#run-progress { margin-top: 14px; }
+.bar { background: #e5e7eb; border-radius: 4px; height: 10px; overflow: hidden; }
+#run-bar { background: #2563eb; height: 100%; width: 0; transition: width .3s; }
+#topbar #new-run { background: #2563eb; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; }

@@ -13,8 +13,34 @@
 <div id="topbar">
   <strong>Garmin Sidescan</strong>
   <span id="status">…</span>
+  <button id="new-run" hidden>+ New run</button>
   <button id="logout" hidden>log out</button>
 </div>
+
+<aside id="drawer" hidden>
+  <button id="drawer-close" title="close">×</button>
+  <h2>New mosaic run</h2>
+
+  <label class="fld">RSD file
+    <select id="rsd-select"></select>
+  </label>
+  <label class="fld">…or upload a new one
+    <input id="rsd-file" type="file" accept=".RSD,.rsd" />
+  </label>
+
+  <details id="params">
+    <summary>Parameters <span class="muted">(defaults are faithful to the original)</span></summary>
+    <div id="params-body"></div>
+    <button id="params-reset" type="button">reset to defaults</button>
+  </details>
+
+  <button id="run-btn">Run mosaic</button>
+
+  <div id="run-progress" hidden>
+    <div class="bar"><div id="run-bar"></div></div>
+    <p id="run-desc" class="muted"></p>
+  </div>
+</aside>
 
 <aside id="panel" hidden>
   <button id="panel-close" title="close">×</button>

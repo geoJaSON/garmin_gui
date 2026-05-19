@@ -129,6 +129,7 @@ async function boot() {
   if (!me.authed) { $("login").hidden = false; return; }
   $("login").hidden = true;
   $("logout").hidden = false;
+  $("new-run").hidden = false;
   if (map.loaded()) loadTracks();
   else map.on("load", loadTracks);
 }
@@ -148,5 +149,122 @@ $("logout").onclick = async () => {
   await api("/api/logout", { method: "POST" });
   location.reload();
 };
+
+// --- Phase 3b: new-run drawer -------------------------------------------
+let cfgFields = [];
+
+async function openDrawer() {
+  $("drawer").hidden = false;
+  const [rsds, cfg] = await Promise.all([
+    api("/api/rsd").then((r) => r.json()),
+    api("/api/config/mosaic").then((r) => r.json()),
+  ]);
+  const sel = $("rsd-select");
+  sel.innerHTML = rsds.length
+    ? rsds.map((r) => `<option value="${r.path}">${r.name}</option>`).join("")
+    : `<option value="">— none uploaded —</option>`;
+  cfgFields = cfg.fields;
+  renderParams();
+}
+
+function renderParams() {
+  $("params-body").innerHTML = cfgFields.map((f) => {
+    const id = "p_" + f.name;
+    if (f.type === "bool")
+      return `<div class="pfld"><label for="${id}">${f.name}</label>
+        <input type="checkbox" id="${id}" ${f.default ? "checked" : ""}></div>`;
+    const isNum = f.type === "int" || f.type === "float";
+    const val = f.default === null || f.default === undefined ? "" : f.default;
+    return `<div class="pfld"><label for="${id}">${f.name}</label>
+      <input type="${isNum ? "number" : "text"}" id="${id}"
+        ${isNum ? 'step="any"' : ""} value="${val}"
+        placeholder="${f.type === "optional" ? "default" : ""}"></div>`;
+  }).join("");
+}
+
+$("params-reset").onclick = renderParams;
+
+function collectConfig() {
+  const cfg = {};
+  for (const f of cfgFields) {
+    const el = $("p_" + f.name);
+    if (!el) continue;
+    if (f.type === "bool") {
+      if (el.checked !== f.default) cfg[f.name] = el.checked;
+    } else if (el.value === "") {
+      continue; // unchanged / use server default
+    } else if (f.type === "int") {
+      const n = parseInt(el.value, 10);
+      if (!Number.isNaN(n) && n !== f.default) cfg[f.name] = n;
+    } else if (f.type === "float") {
+      const n = parseFloat(el.value);
+      if (!Number.isNaN(n) && n !== f.default) cfg[f.name] = n;
+    } else {
+      if (String(el.value) !== String(f.default ?? "")) cfg[f.name] = el.value;
+    }
+  }
+  return cfg;
+}
+
+async function startRun() {
+  const btn = $("run-btn");
+  btn.disabled = true;
+
+  // Upload first if a file was chosen, else use the dropdown selection.
+  let rsdPath = $("rsd-select").value;
+  const file = $("rsd-file").files[0];
+  if (file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    $("run-desc").textContent = "uploading…";
+    $("run-progress").hidden = false;
+    const up = await api("/api/rsd", { method: "POST", body: fd });
+    if (!up.ok) { $("run-desc").textContent = "upload failed"; btn.disabled = false; return; }
+    rsdPath = (await up.json()).path;
+  }
+  if (!rsdPath) { $("run-desc").textContent = "pick or upload an RSD"; btn.disabled = false; return; }
+
+  const r = await api("/api/jobs/mosaic", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ rsd_path: rsdPath, config: collectConfig() }),
+  });
+  if (!r.ok) { $("run-desc").textContent = "submit failed"; btn.disabled = false; return; }
+  const { job_id } = await r.json();
+  streamJob(job_id);
+}
+
+function streamJob(jobId) {
+  $("run-progress").hidden = false;
+  $("run-bar").style.width = "0%";
+  $("run-desc").textContent = "queued…";
+  const es = new EventSource(`/api/jobs/${jobId}/events`);
+  es.onmessage = (ev) => {
+    const job = JSON.parse(ev.data);
+    if (!job) return;
+    const p = job.progress;
+    if (p && p.pct != null) $("run-bar").style.width = p.pct + "%";
+    $("run-desc").textContent =
+      job.status === "running"
+        ? `${p ? p.desc + " — " + (p.pct ?? "?") + "%" : "running…"}`
+        : job.status;
+    if (["done", "error", "cancelled"].includes(job.status)) {
+      es.close();
+      $("run-btn").disabled = false;
+      if (job.status === "done") {
+        $("run-desc").textContent = "done";
+        $("run-bar").style.width = "100%";
+        loadTracks(); // refresh inventory + runs; click the track to view it
+      } else {
+        $("run-desc").textContent = job.error ? "error: " + job.error.split("\n")[0] : job.status;
+      }
+    }
+  };
+  es.onerror = () => { es.close(); $("run-btn").disabled = false; };
+}
+
+$("new-run").onclick = openDrawer;
+$("drawer-close").onclick = () => ($("drawer").hidden = true);
+$("run-btn").onclick = startRun;
 
 boot();

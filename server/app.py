@@ -7,18 +7,21 @@ Wiring only — the real work lives in garmin_core (pipeline) and server.jobs
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from garmin_core.config import MosaicConfig
 from . import db, jobs
 from .auth import AuthDep, is_authed, login, logout, password_ok
 from .settings import (
     MOSAICS_DIR,
+    RSD_DIR,
     RUNS_DIR,
     SECRET_KEY,
     SHARED_PASSWORD,
@@ -61,6 +64,59 @@ async def api_logout(request: Request):
 @app.get("/api/me")
 async def api_me(request: Request):
     return {"authed": is_authed(request)}
+
+
+# ---- RSD files ----------------------------------------------------------
+@app.get("/api/rsd", dependencies=[AuthDep])
+async def api_rsd_list():
+    """RSD files available on the server (uploaded into the data volume)."""
+    out = []
+    for p in sorted(RSD_DIR.glob("*")):
+        if p.is_file() and p.suffix.lower() == ".rsd":
+            out.append({"name": p.name, "path": str(p), "size": p.stat().st_size})
+    return out
+
+
+@app.post("/api/rsd", dependencies=[AuthDep])
+async def api_rsd_upload(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".rsd"):
+        raise HTTPException(400, "expected a .RSD file")
+    # Keep the original name; reject path traversal.
+    name = Path(file.filename).name
+    dest = RSD_DIR / name
+    with dest.open("wb") as fh:
+        while chunk := await file.read(1 << 20):
+            fh.write(chunk)
+    return {"name": name, "path": str(dest), "size": dest.stat().st_size}
+
+
+# ---- MosaicConfig schema (drives the tuning form) -----------------------
+_CFG_TYPES = {bool: "bool", int: "int", float: "float", str: "str"}
+
+
+@app.get("/api/config/mosaic", dependencies=[AuthDep])
+async def api_mosaic_config():
+    """Scalar MosaicConfig fields + defaults so the UI can build a form.
+
+    List-valued fields (payload mode tables) are intentionally omitted —
+    they're advanced and not form-friendly; omitting them means the run
+    uses their faithful defaults.
+    """
+    defaults = MosaicConfig()
+    fields = []
+    for f in dataclasses.fields(MosaicConfig):
+        val = getattr(defaults, f.name)
+        if isinstance(val, list) or isinstance(val, set):
+            continue
+        # Optional[...] fields default to None; treat as free text.
+        if val is None:
+            kind = "optional"
+        elif isinstance(val, bool):
+            kind = "bool"
+        else:
+            kind = _CFG_TYPES.get(type(val), "str")
+        fields.append({"name": f.name, "type": kind, "default": val})
+    return {"fields": fields}
 
 
 # ---- job submission -----------------------------------------------------
