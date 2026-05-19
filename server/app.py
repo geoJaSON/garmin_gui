@@ -321,7 +321,11 @@ def _mount_titiler() -> None:
     except Exception as e:  # keep app importable without titiler installed
         print(f"!! TiTiler not available, /tiles disabled: {e}")
         return
-    tiler = TilerFactory()
+    # router_prefix MUST match the include_router prefix so TiTiler's
+    # url_for() builds tilejson tile URLs that actually resolve. Without
+    # it, tilejson advertised /tiles/{tms}/{z}/{x}/{y} while the real
+    # route was /tiles/tiles/{tms}/{z}/{x}/{y} -> every tile 404'd.
+    tiler = TilerFactory(router_prefix="/tiles")
     app.include_router(tiler.router, prefix="/tiles", tags=["tiles"])
 
 
