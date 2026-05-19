@@ -98,9 +98,44 @@ async function selectTrack(feature) {
   $("panel-title").textContent = name;
   $("panel-body").innerHTML =
     "<dl>" + rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") + "</dl>" + extra +
-    `<div id="meta-slot" class="muted" style="margin-top:14px">loading survey metadata…</div>`;
+    `<div id="meta-slot" class="muted" style="margin-top:14px">loading survey metadata…</div>
+     <div style="margin-top:16px;display:flex;gap:8px">
+       <button id="del-track" class="danger ghost" title="Remove just the track feature from the inventory">Delete track</button>
+       <button id="del-rsd" class="danger" title="Delete RSD file, track, and every mosaic run for it">Delete RSD + runs</button>
+     </div>`;
   $("panel").hidden = false;
   loadTrackMetadata(name);
+  $("del-track").onclick = () => deleteTrackOnly(name);
+  $("del-rsd").onclick = () => deleteRsdCascade(name);
+}
+
+async function deleteTrackOnly(name) {
+  if (!confirm(`Remove "${name}" from the track inventory only?\n` +
+               `The RSD file and any mosaic runs stay.`)) return;
+  const r = await api(`/api/tracks/${encodeURIComponent(name)}`,
+                      { method: "DELETE" });
+  if (!r.ok) { alert("delete failed"); return; }
+  $("panel").hidden = true;
+  loadTracks();
+}
+
+async function deleteRsdCascade(name) {
+  if (!confirm(`Delete "${name}" completely?\n\n` +
+               `This removes the RSD file, the inventory entry, and ALL ` +
+               `mosaic runs (and their COGs) made from it. Existing ` +
+               `area deliverables that used it remain on disk but the ` +
+               `source data is gone.`)) return;
+  const r = await api(`/api/rsd/${encodeURIComponent(name)}`,
+                      { method: "DELETE" });
+  if (!r.ok) { alert("delete failed"); return; }
+  const j = await r.json();
+  $("status").textContent =
+    `deleted ${name}: ${j.mosaic_runs} run(s), ${j.track_features} track entr(y/ies)` +
+    (j.rsd_file ? ", RSD file" : "");
+  $("panel").hidden = true;
+  removeCog();
+  loadTracks();
+  loadLayers();
 }
 
 async function loadTrackMetadata(fileName) {
@@ -569,6 +604,7 @@ async function loadDataTable() {
         <a class="dl" ${a.has_mosaic ? `href="/api/deliverable/${a.mosaic_job_id}/metadata.txt"`
                                       : 'aria-disabled="true" href="#"'}>
           Metadata</a>
+        <button class="del" title="Delete this area">✕</button>
       </td>`;
     const note = tr.querySelector(".note");
     note.addEventListener("change", () => saveNote(a.id, note.value));
@@ -577,8 +613,20 @@ async function loadDataTable() {
       generateDeliverable(a.id,
         (parseFloat(tr.querySelector(".buf").value) || DEFAULT_BUFFER_FT)
           * FT_TO_M);
+    tr.querySelector(".del").onclick = () => deleteArea(a);
     tbody.appendChild(tr);
   }
+}
+
+async function deleteArea(a) {
+  if (!confirm(
+    `Delete area "${a.our_name}" (TPWD ${a.tpwd_app_no})?\n\n` +
+    `This removes the row, its notes, and the link to its last ` +
+    `deliverable. Existing deliverable files on disk are left alone.`)) return;
+  const r = await api(`/api/areas/${a.id}`, { method: "DELETE" });
+  if (!r.ok) { alert("delete failed"); return; }
+  loadDataTable();
+  loadLayers();
 }
 
 async function saveNote(id, notes) {

@@ -572,11 +572,61 @@ async def api_delete_run(job_id: str):
 
 @app.delete("/api/rsd/{name}", dependencies=[AuthDep])
 async def api_delete_rsd(name: str):
-    target = (RSD_DIR / Path(name).name)
-    if not target.exists():
-        raise HTTPException(404, "no such RSD")
-    target.unlink()
-    return {"ok": True}
+    """Cascade delete: RSD file + track inventory entry + every mosaic run
+    (and its run dir) keyed to this RSD. 404 only if nothing matched."""
+    import shutil
+
+    name = Path(name).name   # path-traversal guard
+    removed = {"rsd_file": False, "track_features": 0, "mosaic_runs": 0}
+
+    rsd_file = RSD_DIR / name
+    if rsd_file.exists():
+        rsd_file.unlink()
+        removed["rsd_file"] = True
+
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    if inv.exists():
+        fc = json.loads(inv.read_text())
+        before = len(fc.get("features", []))
+        fc["features"] = [
+            f for f in fc.get("features", [])
+            if (f.get("properties") or {}).get("file_name") != name
+        ]
+        removed["track_features"] = before - len(fc["features"])
+        inv.write_text(json.dumps(fc))
+
+    for j in db.find_mosaic_jobs_by_rsd(name):
+        rd = RUNS_DIR / j["id"]
+        if rd.exists():
+            shutil.rmtree(rd, ignore_errors=True)
+        with db.connect() as c:
+            c.execute("DELETE FROM jobs WHERE id=?", (j["id"],))
+        removed["mosaic_runs"] += 1
+
+    if not (removed["rsd_file"] or removed["track_features"]
+            or removed["mosaic_runs"]):
+        raise HTTPException(404, "nothing to delete for that name")
+    return {"ok": True, **removed}
+
+
+@app.delete("/api/tracks/{file_name}", dependencies=[AuthDep])
+async def api_delete_track(file_name: str):
+    """Remove just the track feature from the inventory; leaves the
+    RSD file and any mosaic runs intact."""
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    if not inv.exists():
+        raise HTTPException(404, "no inventory on disk")
+    fc = json.loads(inv.read_text())
+    before = len(fc.get("features", []))
+    fc["features"] = [
+        f for f in fc.get("features", [])
+        if (f.get("properties") or {}).get("file_name") != file_name
+    ]
+    removed = before - len(fc["features"])
+    if not removed:
+        raise HTTPException(404, "no such track in inventory")
+    inv.write_text(json.dumps(fc))
+    return {"ok": True, "removed": removed}
 
 
 @app.get("/api/runs", dependencies=[AuthDep])

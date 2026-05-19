@@ -161,6 +161,24 @@ def set_progress(job_id: str, progress: dict) -> None:
         )
 
 
+def find_mosaic_jobs_by_rsd(rsd_name: str) -> list[dict]:
+    """Every mosaic-kind job whose RSD matches by params or result.
+
+    Used by the cascade delete: a single uploaded RSD may have been
+    mosaicked more than once.
+    """
+    out = []
+    for j in list_jobs(100000):
+        if j["kind"] != "mosaic":
+            continue
+        params = j.get("params") or {}
+        result = j.get("result") or {}
+        rsd_param = (params.get("rsd_path") or "").rsplit("/", 1)[-1]
+        if rsd_param == rsd_name or result.get("rsd_name") == rsd_name:
+            out.append(j)
+    return out
+
+
 def update_job_result(job_id: str, patch: dict) -> bool:
     """Merge `patch` into a job's result JSON. Used by the backfill tool."""
     with connect() as c:

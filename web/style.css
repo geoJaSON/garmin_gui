@@ -131,3 +131,18 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 #data-table button.gen { background: #16a34a; color: #fff; }
 #data-table a.dl { background: #475569; color: #fff; }
 #data-table a.dl[aria-disabled="true"] { background: #d1d5db; color: #9ca3af; pointer-events: none; }
+#data-table button.del {
+  background: transparent; color: #b91c1c; border: 1px solid #fca5a5;
+  width: 26px; padding: 2px 0; font-weight: bold;
+}
+#data-table button.del:hover { background: #fee2e2; }
+
+button.danger {
+  background: #dc2626; color: #fff; border: 0; border-radius: 4px;
+  padding: 6px 10px; cursor: pointer; font-size: 12px;
+}
+button.danger:hover { background: #b91c1c; }
+button.danger.ghost {
+  background: transparent; color: #b91c1c; border: 1px solid #fca5a5;
+}
+button.danger.ghost:hover { background: #fee2e2; }
