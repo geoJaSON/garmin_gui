@@ -27,4 +27,8 @@ EXPOSE 8000
 
 # Single Uvicorn worker: the serial job worker is a background thread inside
 # it; multiple web workers would duplicate the queue consumer.
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# --proxy-headers + forwarded-allow-ips=*: trust Caddy's X-Forwarded-Proto so
+# TiTiler builds https tile URLs (only Caddy can reach :8000 on the internal
+# docker network — :8000 is not published).
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--proxy-headers", "--forwarded-allow-ips", "*"]

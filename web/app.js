@@ -106,8 +106,13 @@ async function showCog(cogPath) {
   const tj = await api(
     "/tiles/WebMercatorQuad/tilejson.json?url=" + encodeURIComponent(cogPath)
   ).then((r) => r.json());
+  // Defensive: force tile URLs onto this page's origin+scheme so a
+  // proxy emitting http:// can't trip mixed-content blocking on HTTPS.
+  const tiles = (tj.tiles || []).map((u) =>
+    u.replace(/^https?:\/\/[^/]+/i, location.origin)
+  );
   removeCog();
-  map.addSource("cog", { type: "raster", tiles: tj.tiles, tileSize: 256,
+  map.addSource("cog", { type: "raster", tiles, tileSize: 256,
                          bounds: tj.bounds });
   map.addLayer({ id: "cog", type: "raster", source: "cog" }, "tracks-line");
   if (tj.bounds) {
