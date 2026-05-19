@@ -110,11 +110,15 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
 
     params:
       run_ids: list of mosaic job ids (W2: merge their COGs)
-      polygon: optional GeoJSON geometry/Feature/FC (W3: pick tracks whose
-               geometry intersects it from the inventory, merge+clip).
+      polygon: GeoJSON geometry/Feature/FC (W3: tracks intersecting it)
+      area:    {"Our_Name":..,"TPDW_App_No":..} -> clip by the matching
+               feature in the buffered layer; the result is the
+               downloadable per-area deliverable (Phase 5).
     """
     import json
-    from garmin_core import areas
+    from garmin_core import areas as areas_mod
+    from shapely.geometry import shape
+    from shapely.prepared import prep
 
     p = job["params"]
     mosaic_dir = MOSAICS_DIR / job["id"]
@@ -127,34 +131,12 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         c = j["result"].get("cog")
         return c if c and Path(c).exists() else None
 
-    clip = None
-    if p.get("polygon"):
-        poly = p["polygon"]
-        # Accept a geometry, Feature, or FeatureCollection; persist as an
-        # FC so areas.first_polygon (which expects an FC on disk) works.
-        t = (poly or {}).get("type")
-        if t == "FeatureCollection":
-            fc = poly
-        elif t == "Feature":
-            fc = {"type": "FeatureCollection", "features": [poly]}
-        else:
-            fc = {"type": "FeatureCollection",
-                  "features": [{"type": "Feature", "properties": {},
-                                "geometry": poly}]}
-        poly_path = POLYGONS_DIR / f"{job['id']}.geojson"
-        poly_path.parent.mkdir(parents=True, exist_ok=True)
-        poly_path.write_text(json.dumps(fc))
-        clip = areas.first_polygon(str(poly_path))
-        # Intersect the inventory directly (we only need file_name to map a
-        # track to its registered run COG — no RSD path needed, unlike
-        # areas.tracks_intersecting_polygon which requires file_path).
-        from shapely.geometry import shape
-        from shapely.prepared import prep
-
+    def cogs_intersecting(clip_geom):
+        """Inventory tracks intersecting clip_geom -> their run COGs."""
         inv = TRACKS_DIR / "rsd_tracks.geojson"
         fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
-        pc = prep(clip)
-        cogs, names = [], []
+        pc = prep(clip_geom)
+        cg, nm = [], []
         for feat in fc.get("features", []):
             g = feat.get("geometry")
             if not g:
@@ -168,8 +150,54 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
             run = db.find_done_mosaic_by_rsd(fn)
             c = cog_for_run(run["id"]) if run else None
             if c:
-                cogs.append(c)
-                names.append(fn)
+                cg.append(c)
+                nm.append(fn)
+        return cg, nm
+
+    clip = None
+    area_name = None
+
+    if p.get("area"):
+        # Phase 5 deliverable: clip by the matching BUFFERED feature.
+        key = p["area"]
+        buf = POLYGONS_DIR / "layer_buffered.geojson"
+        if not buf.exists():
+            return {"ok": False, "reason": "no buffered layer uploaded",
+                    "rasters": 0}
+        fc = json.loads(buf.read_text())
+        match = None
+        for feat in fc.get("features", []):
+            pr = feat.get("properties") or {}
+            if (str(pr.get("Our_Name")) == str(key.get("Our_Name"))
+                    and str(pr.get("TPDW_App_No")) == str(key.get("TPDW_App_No"))):
+                match = feat
+                break
+        if match is None or not match.get("geometry"):
+            return {"ok": False, "reason": "no matching buffered polygon",
+                    "rasters": 0}
+        clip = shape(match["geometry"])
+        area_name = areas_mod.sanitize_name(
+            str(key.get("Our_Name") or key.get("TPDW_App_No") or "area")
+        )
+        cogs, names = cogs_intersecting(clip)
+
+    elif p.get("polygon"):
+        poly = p["polygon"]
+        t = (poly or {}).get("type")
+        if t == "FeatureCollection":
+            fcj = poly
+        elif t == "Feature":
+            fcj = {"type": "FeatureCollection", "features": [poly]}
+        else:
+            fcj = {"type": "FeatureCollection",
+                   "features": [{"type": "Feature", "properties": {},
+                                 "geometry": poly}]}
+        poly_path = POLYGONS_DIR / f"{job['id']}.geojson"
+        poly_path.parent.mkdir(parents=True, exist_ok=True)
+        poly_path.write_text(json.dumps(fcj))
+        clip = areas_mod.first_polygon(str(poly_path))
+        cogs, names = cogs_intersecting(clip)
+
     else:
         run_ids = p.get("run_ids") or []
         cogs = [c for c in (cog_for_run(r) for r in run_ids) if c]
@@ -181,17 +209,19 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
     prog("combine", 0, len(cogs))
     mosaic_dir.mkdir(parents=True, exist_ok=True)
     if clip is not None:
-        ok = areas.merge_and_clip_rasters([Path(c) for c in cogs], clip, out)
+        ok = areas_mod.merge_and_clip_rasters([Path(c) for c in cogs], clip, out)
         mode = "merge+clip"
     else:
-        ok = areas._merge_rasters([Path(c) for c in cogs], out)
+        ok = areas_mod._merge_rasters([Path(c) for c in cogs], out)
         mode = "merge"
     prog("combine", len(cogs), len(cogs))
 
     res = {"ok": bool(ok), "mode": mode, "rasters": len(cogs),
-           "sources": names}
+           "sources": names, "area_name": area_name}
     if ok:
         res["cog"] = str(to_cog(out, mosaic_dir / "mosaic_cog.tif"))
+        # The plain clipped GeoTIFF is the downloadable deliverable.
+        res["deliverable"] = str(out)
     return res
 
 

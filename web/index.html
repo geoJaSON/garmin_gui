@@ -16,6 +16,7 @@
   <button id="new-run" hidden>+ New run</button>
   <button id="combine-toggle" hidden>Combine: off</button>
   <button id="combine-go" hidden>Combine (0)</button>
+  <button id="layers-toggle" hidden>Layers</button>
   <label id="clip-label" hidden class="clip">Clip by polygon
     <input id="clip-file" type="file" accept=".geojson,.json" hidden />
   </label>
@@ -52,6 +53,17 @@
   <h2 id="panel-title">Track</h2>
   <div id="panel-body"></div>
 </aside>
+
+<div id="layers-box" hidden>
+  <strong>Polygon layers</strong>
+  <label class="fld">Areas (.geojson)
+    <input id="up-areas" type="file" accept=".geojson,.json" />
+  </label>
+  <label class="fld">Buffered / clip (.geojson)
+    <input id="up-buffered" type="file" accept=".geojson,.json" />
+  </label>
+  <p id="layers-status" class="muted"></p>
+</div>
 
 <div id="login" hidden>
   <form id="login-form">

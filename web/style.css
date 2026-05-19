@@ -87,3 +87,14 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 }
 #topbar #combine-go { background: #16a34a; }
 #topbar #clip-label { display: inline-block; }
+#topbar #layers-toggle { background: #7c3aed; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+#layers-box {
+  position: absolute; top: 56px; left: 12px; z-index: 6;
+  background: #fff; padding: 12px 14px; border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.3); width: 260px;
+}
+#layers-box strong { display: block; margin-bottom: 8px; }
+#dl-link {
+  display: inline-block; margin-top: 12px; background: #16a34a;
+  color: #fff; padding: 8px 12px; border-radius: 4px; text-decoration: none;
+}

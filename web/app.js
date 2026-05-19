@@ -150,8 +150,10 @@ async function boot() {
   $("logout").hidden = false;
   $("new-run").hidden = false;
   $("combine-toggle").hidden = false;
-  if (map.loaded()) loadTracks();
-  else map.on("load", loadTracks);
+  $("layers-toggle").hidden = false;
+  const init = () => { loadTracks(); loadLayers(); };
+  if (map.loaded()) init();
+  else map.on("load", init);
 }
 
 $("login-form").addEventListener("submit", async (e) => {
@@ -380,5 +382,121 @@ $("clip-file").onchange = async (e) => {
 $("new-run").onclick = openDrawer;
 $("drawer-close").onclick = () => ($("drawer").hidden = true);
 $("run-btn").onclick = startRun;
+
+// --- Phase 5: area polygon layers + per-area deliverable ----------------
+async function loadLayers() {
+  const L = await api("/api/layers").then((r) => r.json());
+  // buffered first so the solid areas outline draws on top of the dashes.
+  for (const kind of ["buffered", "areas"]) {
+    const fc = L[kind];
+    if (!fc) continue;
+    const src = "layer-" + kind;
+    if (map.getSource(src)) { map.getSource(src).setData(fc); continue; }
+    map.addSource(src, { type: "geojson", data: fc });
+    if (kind === "buffered") {
+      map.addLayer({
+        id: src + "-line", type: "line", source: src,
+        paint: { "line-color": "#6b7280", "line-width": 1.5,
+                 "line-dasharray": [2, 2], "line-opacity": 0.55 },
+      });
+    } else {
+      map.addLayer({
+        id: src + "-fill", type: "fill", source: src,
+        paint: { "fill-color": "#7c3aed", "fill-opacity": 0.07 },
+      });
+      map.addLayer({
+        id: src + "-line", type: "line", source: src,
+        paint: { "line-color": "#7c3aed", "line-width": 2 },
+      });
+      map.on("click", src + "-fill", (e) => selectArea(e.features[0]));
+      map.on("mouseenter", src + "-fill",
+        () => (map.getCanvas().style.cursor = "pointer"));
+      map.on("mouseleave", src + "-fill",
+        () => (map.getCanvas().style.cursor = ""));
+    }
+  }
+}
+
+async function selectArea(feature) {
+  const pr = feature.properties || {};
+  const on = pr.Our_Name, no = pr.TPDW_App_No;
+  $("panel-title").textContent = on || "Area";
+  $("panel-body").innerHTML = "loading coverage…";
+  $("panel").hidden = false;
+  removeCog();
+
+  let cov;
+  try {
+    const r = await api(
+      `/api/coverage?our_name=${encodeURIComponent(on)}` +
+      `&app_no=${encodeURIComponent(no)}`
+    );
+    if (!r.ok) throw new Error();
+    cov = await r.json();
+  } catch {
+    $("panel-body").innerHTML =
+      "No matching buffered polygon for this area.";
+    return;
+  }
+  // Highlight-only (no coverage metrics, per spec).
+  map.setFilter("tracks-sel",
+    ["in", ["get", "file_name"], ["literal", cov.tracks]]);
+
+  $("panel-body").innerHTML =
+    `<dl><dt>TPDW App No</dt><dd>${no ?? "—"}</dd></dl>` +
+    `<button id="gen-deliverable" class="badge"
+       style="border:0;cursor:pointer">Generate deliverable</button>` +
+    `<div id="dl-slot"></div>`;
+  $("gen-deliverable").onclick = () => generateDeliverable(on, no);
+}
+
+async function generateDeliverable(on, no) {
+  $("status").textContent = "deliverable: submitting…";
+  const r = await api("/api/jobs/combine", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: { Our_Name: on, TPDW_App_No: no } }),
+  });
+  if (!r.ok) { $("status").textContent = "deliverable submit failed"; return; }
+  const { job_id } = await r.json();
+  streamJob(job_id, (job) => {
+    const res = job.result || {};
+    if (res.cog) showCog(res.cog);
+    if (res.ok) {
+      $("status").textContent =
+        `deliverable ready (${res.rasters} run(s))`;
+      const slot = $("dl-slot");
+      if (slot)
+        slot.innerHTML =
+          `<a id="dl-link" href="/api/deliverable/${job_id}">` +
+          `Download GeoTIFF</a>`;
+    } else {
+      $("status").textContent =
+        "deliverable: " + (res.reason || "failed");
+    }
+  });
+}
+
+async function uploadLayer(kind, file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  $("layers-status").textContent = `uploading ${kind}…`;
+  const r = await api("/api/layers/" + kind, { method: "POST", body: fd });
+  if (!r.ok) { $("layers-status").textContent = kind + " upload failed"; return; }
+  const j = await r.json();
+  $("layers-status").textContent = `${kind}: ${j.features} feature(s)`;
+  loadLayers();
+}
+
+$("layers-toggle").onclick = () =>
+  ($("layers-box").hidden = !$("layers-box").hidden);
+$("up-areas").onchange = (e) => {
+  const f = e.target.files[0]; if (f) uploadLayer("areas", f);
+  e.target.value = "";
+};
+$("up-buffered").onchange = (e) => {
+  const f = e.target.files[0]; if (f) uploadLayer("buffered", f);
+  e.target.value = "";
+};
 
 boot();

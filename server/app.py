@@ -21,6 +21,7 @@ from . import db, jobs
 from .auth import AuthDep, is_authed, login, logout, password_ok
 from .settings import (
     MOSAICS_DIR,
+    POLYGONS_DIR,
     RSD_DIR,
     RUNS_DIR,
     SECRET_KEY,
@@ -178,10 +179,107 @@ async def submit_combine(request: Request):
     body = await request.json()
     run_ids = body.get("run_ids")
     polygon = body.get("polygon")
-    if not run_ids and not polygon:
-        raise HTTPException(400, "need run_ids or polygon")
-    job_id = jobs.enqueue("combine", {"run_ids": run_ids, "polygon": polygon})
+    area = body.get("area")  # {"Our_Name":..,"TPDW_App_No":..} -> deliverable
+    if not run_ids and not polygon and not area:
+        raise HTTPException(400, "need run_ids, polygon, or area")
+    job_id = jobs.enqueue(
+        "combine", {"run_ids": run_ids, "polygon": polygon, "area": area}
+    )
     return {"job_id": job_id}
+
+
+# ---- area polygon layers (Phase 5) --------------------------------------
+_LAYER_FILES = {
+    "areas": POLYGONS_DIR / "layer_areas.geojson",
+    "buffered": POLYGONS_DIR / "layer_buffered.geojson",
+}
+
+
+@app.post("/api/layers/{kind}", dependencies=[AuthDep])
+async def api_layer_upload(kind: str, file: UploadFile = File(...)):
+    if kind not in _LAYER_FILES:
+        raise HTTPException(404, "kind must be 'areas' or 'buffered'")
+    raw = await file.read()
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "not valid JSON")
+    if payload.get("type") != "FeatureCollection":
+        raise HTTPException(400, "expected a GeoJSON FeatureCollection")
+    _LAYER_FILES[kind].write_bytes(raw)
+    return {"ok": True, "kind": kind,
+            "features": len(payload.get("features", []))}
+
+
+@app.get("/api/layers", dependencies=[AuthDep])
+async def api_layers():
+    out = {}
+    for kind, path in _LAYER_FILES.items():
+        out[kind] = json.loads(path.read_text()) if path.exists() else None
+    return out
+
+
+@app.get("/api/coverage", dependencies=[AuthDep])
+async def api_coverage(our_name: str, app_no: str):
+    """Tracks intersecting the buffered polygon for one area (highlight set).
+
+    Returns the track file_names and which already have a mosaic run.
+    """
+    buf = _LAYER_FILES["buffered"]
+    if not buf.exists():
+        raise HTTPException(400, "no buffered layer uploaded")
+    from shapely.geometry import shape
+    from shapely.prepared import prep
+
+    fc = json.loads(buf.read_text())
+    match = None
+    for feat in fc.get("features", []):
+        pr = feat.get("properties") or {}
+        if (str(pr.get("Our_Name")) == our_name
+                and str(pr.get("TPDW_App_No")) == app_no):
+            match = feat
+            break
+    if match is None or not match.get("geometry"):
+        raise HTTPException(404, "no matching buffered polygon")
+
+    clip = prep(shape(match["geometry"]))
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    inv_fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
+    tracks, with_mosaic = [], []
+    for f in inv_fc.get("features", []):
+        g = f.get("geometry")
+        if not g:
+            continue
+        geom = shape(g)
+        if geom.is_empty or not clip.intersects(geom):
+            continue
+        fn = (f.get("properties") or {}).get("file_name")
+        if not fn:
+            continue
+        tracks.append(fn)
+        if db.find_done_mosaic_by_rsd(fn):
+            with_mosaic.append(fn)
+    return {"tracks": tracks, "with_mosaic": with_mosaic,
+            "total": len(tracks)}
+
+
+@app.get("/api/deliverable/{job_id}", dependencies=[AuthDep])
+async def api_deliverable(job_id: str):
+    """Download the clipped per-area GeoTIFF deliverable for a combine job."""
+    from fastapi.responses import FileResponse
+
+    job = db.get_job(job_id)
+    if not job or not job.get("result"):
+        raise HTTPException(404, "no such combine job")
+    res = job["result"]
+    tif = res.get("deliverable")
+    if not tif or not Path(tif).exists():
+        raise HTTPException(404, "no deliverable file")
+    label = res.get("area_name") or "mosaic"
+    return FileResponse(
+        tif, media_type="image/tiff",
+        filename=f"{label}_intensity_clipped.tif",
+    )
 
 
 # ---- job status ---------------------------------------------------------
