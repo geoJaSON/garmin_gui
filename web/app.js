@@ -97,8 +97,47 @@ async function selectTrack(feature) {
   }
   $("panel-title").textContent = name;
   $("panel-body").innerHTML =
-    "<dl>" + rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") + "</dl>" + extra;
+    "<dl>" + rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") + "</dl>" + extra +
+    `<div id="meta-slot" class="muted" style="margin-top:14px">loading survey metadata…</div>`;
   $("panel").hidden = false;
+  loadTrackMetadata(name);
+}
+
+async function loadTrackMetadata(fileName) {
+  const slot = $("meta-slot");
+  if (!slot) return;
+  const r = await api(`/api/tracks/${encodeURIComponent(fileName)}/metadata`);
+  if (!r.ok) {
+    slot.textContent =
+      r.status === 404 ? "no survey metadata on disk for this RSD"
+                       : "metadata fetch failed";
+    return;
+  }
+  const m = await r.json();
+  slot.classList.remove("muted");
+  const stat = (s, suffix = "") =>
+    s ? `${s.mean}${suffix} (${s.min}–${s.max})` : "—";
+  const dur = m.duration_s
+    ? `${Math.round(m.duration_s / 60)} min`
+    : "—";
+  const u = m.unit || {};
+  const unitLine = [
+    u.product_number ? `product ${u.product_number}` : null,
+    u.software_version ? `sw ${u.software_version}` : null,
+    u.channel_count ? `${u.channel_count} ch` : null,
+  ].filter(Boolean).join(" · ") || "—";
+  slot.innerHTML = `
+    <h3 style="margin:0 0 8px;font-size:13px;color:#374151">Survey metadata</h3>
+    <dl>
+      <dt>Pings</dt><dd>${m.ping_count ?? "—"}</dd>
+      <dt>Duration</dt><dd>${dur}</dd>
+      <dt>Depth (m)</dt><dd>${stat(m.depth_m)}</dd>
+      <dt>Range (m)</dt><dd>${stat(m.range_m)}</dd>
+      <dt>UTM zone</dt><dd>${m.utm_zone ?? "—"}</dd>
+      <dt>Garmin unit</dt><dd>${unitLine}</dd>
+    </dl>
+    <p class="muted" style="font-size:11px;margin:6px 0 0">
+      source: ${m.source}</p>`;
 }
 
 async function showCog(cogPath) {

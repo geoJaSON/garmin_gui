@@ -453,6 +453,35 @@ async def api_job_events(job_id: str):
 
 
 # ---- result discovery ---------------------------------------------------
+@app.get("/api/tracks/{file_name}/metadata", dependencies=[AuthDep])
+async def api_track_metadata(file_name: str):
+    """Per-RSD survey metadata (depth/range/ping count/Garmin unit).
+
+    The pipeline writes meta CSVs beside the RSD; for runs we keep them
+    inside the run dir. Imported historical runs have no CSVs available.
+    """
+    from .track_metadata import summarize_meta_dir
+
+    stem = Path(file_name).stem
+    sources = []
+
+    # Most recent mosaic run (best match — meta produced fresh for it).
+    run = db.find_done_mosaic_by_rsd(file_name)
+    if run:
+        sources.append(
+            (RUNS_DIR / run["id"] / f"garmin_output_{stem}" / "meta", "run")
+        )
+    # RSD-folder meta (built by a tracks job or a future re-run).
+    sources.append((RSD_DIR / f"garmin_output_{stem}" / "meta", "tracks"))
+
+    for meta_dir, kind in sources:
+        s = summarize_meta_dir(meta_dir)
+        if s:
+            s["source"] = kind
+            return s
+    raise HTTPException(404, "no metadata available for this RSD")
+
+
 @app.get("/api/tracks", dependencies=[AuthDep])
 async def api_tracks():
     """The track inventory GeoJSON (empty FeatureCollection if none yet)."""
