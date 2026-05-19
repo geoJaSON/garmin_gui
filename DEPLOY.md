@@ -71,6 +71,21 @@ docker compose cp ./some_rsd_folder app:/data/rsd/
 Then trigger a `tracks` job over `/data/rsd` from the UI/API; the map will
 populate. Mosaic runs land under `/data/runs/<job>/`.
 
+## Backfilling metadata + weather
+
+Older mosaic runs (pre-Phase 7) and historical imports don't have weather
+or survey-metadata in their job results. Catch them up at any time:
+
+```bash
+docker compose exec app python -m server.backfill --dry-run   # plan only
+docker compose exec app python -m server.backfill             # apply
+docker compose exec app python -m server.backfill --force     # refetch all
+```
+
+Weather backfill needs the **track inventory geojson** uploaded (so each
+RSD has a lat/lon centroid) and the survey date in the RSD filename.
+Open-Meteo fetches are cached under `/data/weather/`.
+
 ## Operations
 
 - **Update:** `git pull` (or rsync) then `docker compose up -d --build`.

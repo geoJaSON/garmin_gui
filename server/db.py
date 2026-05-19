@@ -161,6 +161,20 @@ def set_progress(job_id: str, progress: dict) -> None:
         )
 
 
+def update_job_result(job_id: str, patch: dict) -> bool:
+    """Merge `patch` into a job's result JSON. Used by the backfill tool."""
+    with connect() as c:
+        row = c.execute("SELECT result FROM jobs WHERE id=?",
+                        (job_id,)).fetchone()
+        if not row:
+            return False
+        cur = json.loads(row["result"]) if row["result"] else {}
+        cur.update(patch)
+        c.execute("UPDATE jobs SET result=? WHERE id=?",
+                  (json.dumps(cur), job_id))
+        return True
+
+
 def finish_job(job_id: str, *, result: Any = None, error: str = None) -> None:
     status = "error" if error else "done"
     with connect() as c:
