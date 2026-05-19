@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import db
 from .cog import to_cog
-from .settings import RUNS_DIR, MOSAICS_DIR
+from .settings import RUNS_DIR, MOSAICS_DIR, TRACKS_DIR
 
 
 class _Throttle:
@@ -59,11 +59,28 @@ def _run_mosaic(job: dict, prog: _Throttle) -> dict:
     cog = run_dir / "intensity_cog.tif"
     if intensity.exists():
         to_cog(intensity, cog)
+
+    # Append this RSD's track to the shared inventory so the just-run
+    # mosaic actually shows up on the (track-driven) map without a
+    # separate tracks job. A failure here must not fail the mosaic.
+    track_added = False
+    try:
+        from garmin_core.config import TracksConfig
+        from garmin_core.tracks import build_track_inventory
+
+        build_track_inventory(
+            run_dir, TRACKS_DIR / "rsd_tracks.geojson", TracksConfig()
+        )
+        track_added = True
+    except Exception as e:
+        print(f"  track append skipped: {e}")
+
     return {
         "run_id": run_id,
         "processed_dir": str(out_dir),
         "intensity": str(intensity) if intensity.exists() else None,
         "cog": str(cog) if cog.exists() else None,
+        "track_added": track_added,
     }
 
 
