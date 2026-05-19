@@ -78,6 +78,7 @@ async function loadTracks() {
 async function selectTrack(feature) {
   const p = feature.properties || {};
   const name = p.file_name || "(unknown)";
+  if (combineMode) { toggleSelect(name); return; }
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], name]);
 
   const run = runsByRsd[name];
@@ -148,6 +149,7 @@ async function boot() {
   $("login").hidden = true;
   $("logout").hidden = false;
   $("new-run").hidden = false;
+  $("combine-toggle").hidden = false;
   if (map.loaded()) loadTracks();
   else map.on("load", loadTracks);
 }
@@ -252,34 +254,128 @@ async function startRun() {
   streamJob(job_id);
 }
 
-function streamJob(jobId) {
-  $("run-progress").hidden = false;
-  $("run-bar").style.width = "0%";
-  $("run-desc").textContent = "queued…";
+function streamJob(jobId, onDone) {
+  const usePanel = !onDone; // mosaic-run path uses the drawer progress UI
+  if (usePanel) {
+    $("run-progress").hidden = false;
+    $("run-bar").style.width = "0%";
+    $("run-desc").textContent = "queued…";
+  }
   const es = new EventSource(`/api/jobs/${jobId}/events`);
   es.onmessage = (ev) => {
     const job = JSON.parse(ev.data);
     if (!job) return;
     const p = job.progress;
-    if (p && p.pct != null) $("run-bar").style.width = p.pct + "%";
-    $("run-desc").textContent =
-      job.status === "running"
-        ? `${p ? p.desc + " — " + (p.pct ?? "?") + "%" : "running…"}`
-        : job.status;
+    const label = job.status === "running"
+      ? (p ? `${p.desc} — ${p.pct ?? "?"}%` : "running…")
+      : job.status;
+    if (usePanel) {
+      if (p && p.pct != null) $("run-bar").style.width = p.pct + "%";
+      $("run-desc").textContent = label;
+    } else {
+      $("status").textContent = `combine: ${label}`;
+    }
     if (["done", "error", "cancelled"].includes(job.status)) {
       es.close();
       $("run-btn").disabled = false;
       if (job.status === "done") {
-        $("run-desc").textContent = "done";
-        $("run-bar").style.width = "100%";
-        loadTracks(); // refresh inventory + runs; click the track to view it
+        if (usePanel) {
+          $("run-desc").textContent = "done";
+          $("run-bar").style.width = "100%";
+          loadTracks();
+        }
+        if (onDone) onDone(job);
       } else {
-        $("run-desc").textContent = job.error ? "error: " + job.error.split("\n")[0] : job.status;
+        const msg = job.error ? "error: " + job.error.split("\n")[0] : job.status;
+        if (usePanel) $("run-desc").textContent = msg;
+        else $("status").textContent = "combine " + msg;
       }
     }
   };
   es.onerror = () => { es.close(); $("run-btn").disabled = false; };
 }
+
+// --- Phase 3c: combine builder (W2 multi-track, W3 polygon) --------------
+let combineMode = false;
+const selected = new Set();
+
+function highlightSelected() {
+  map.setFilter("tracks-sel",
+    ["in", ["get", "file_name"], ["literal", Array.from(selected)]]);
+  $("combine-go").textContent = `Combine (${selected.size})`;
+  $("combine-go").hidden = selected.size === 0;
+}
+
+function setCombineMode(on) {
+  combineMode = on;
+  $("combine-toggle").textContent = `Combine: ${on ? "on" : "off"}`;
+  $("clip-label").hidden = !on;
+  if (!on) {
+    selected.clear();
+    map.setFilter("tracks-sel", ["==", ["get", "file_name"], "__none__"]);
+    $("combine-go").hidden = true;
+  } else {
+    $("panel").hidden = true;
+    removeCog();
+  }
+}
+
+function toggleSelect(name) {
+  if (selected.has(name)) selected.delete(name);
+  else selected.add(name);
+  highlightSelected();
+}
+
+async function runCombine(body, desc) {
+  $("status").textContent = `combine: ${desc}…`;
+  const r = await api("/api/jobs/combine", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) { $("status").textContent = "combine submit failed"; return; }
+  const { job_id } = await r.json();
+  streamJob(job_id, (job) => {
+    const cog = job.result && job.result.cog;
+    if (cog) {
+      showCog(cog);
+      $("status").textContent =
+        `combined ${job.result.rasters} run(s) (${job.result.mode})`;
+    } else {
+      $("status").textContent =
+        "combine produced nothing: " + (job.result?.reason || "no overlap");
+    }
+  });
+}
+
+$("combine-toggle").onclick = () => setCombineMode(!combineMode);
+
+$("combine-go").onclick = () => {
+  const runIds = [];
+  const missing = [];
+  for (const name of selected) {
+    const run = runsByRsd[name];
+    if (run) runIds.push(run.job_id);
+    else missing.push(name);
+  }
+  if (!runIds.length) {
+    $("status").textContent = "selected tracks have no mosaics to combine";
+    return;
+  }
+  if (missing.length)
+    console.warn("skipping tracks with no mosaic:", missing);
+  runCombine({ run_ids: runIds }, `${runIds.length} runs`);
+};
+
+$("clip-file").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  let gj;
+  try { gj = JSON.parse(await f.text()); }
+  catch { $("status").textContent = "polygon: not valid JSON"; return; }
+  runCombine({ polygon: gj }, "polygon clip");
+  e.target.value = "";
+};
 
 $("new-run").onclick = openDrawer;
 $("drawer-close").onclick = () => ($("drawer").hidden = true);

@@ -167,18 +167,20 @@ async def submit_tracks(request: Request):
     return {"job_id": job_id}
 
 
-@app.post("/api/jobs/mosaic_tracks", dependencies=[AuthDep])
-async def submit_mosaic_tracks(request: Request):
+@app.post("/api/jobs/combine", dependencies=[AuthDep])
+async def submit_combine(request: Request):
+    """W2/W3: combine existing run COGs into one mosaic.
+
+    body: {run_ids:[...]}                     -> merge those runs (W2)
+          {polygon: <GeoJSON geometry/FC>}    -> merge+clip runs whose track
+                                                 intersects the polygon (W3)
+    """
     body = await request.json()
-    params = {
-        "rsd_paths": body.get("rsd_paths"),
-        "tracks_geojson": body.get("tracks_geojson"),
-        "clip_polygon_path": body.get("clip_polygon_path"),
-        "raster_name": body.get("raster_name", "intensity.tif"),
-    }
-    if not params["rsd_paths"] and not (params["tracks_geojson"] and params["clip_polygon_path"]):
-        raise HTTPException(400, "need rsd_paths, or tracks_geojson + clip_polygon_path")
-    job_id = jobs.enqueue("mosaic_tracks", params)
+    run_ids = body.get("run_ids")
+    polygon = body.get("polygon")
+    if not run_ids and not polygon:
+        raise HTTPException(400, "need run_ids or polygon")
+    job_id = jobs.enqueue("combine", {"run_ids": run_ids, "polygon": polygon})
     return {"job_id": job_id}
 
 
@@ -309,6 +311,25 @@ async def api_runs():
                     "job_id": j["id"],
                     "cog": cog,
                     "rsd_name": Path(rsd).name if rsd else None,
+                    "finished_at": j["finished_at"],
+                })
+    return out
+
+
+@app.get("/api/mosaics", dependencies=[AuthDep])
+async def api_mosaics():
+    """Completed combine (W2/W3) mosaics, for the map browser."""
+    out = []
+    for j in db.list_jobs(500):
+        if j["kind"] == "combine" and j["status"] == "done" and j.get("result"):
+            cog = j["result"].get("cog")
+            if cog and Path(cog).exists():
+                out.append({
+                    "job_id": j["id"],
+                    "cog": cog,
+                    "mode": j["result"].get("mode"),
+                    "rasters": j["result"].get("rasters"),
+                    "sources": j["result"].get("sources"),
                     "finished_at": j["finished_at"],
                 })
     return out

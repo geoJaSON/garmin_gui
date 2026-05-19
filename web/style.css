@@ -79,3 +79,11 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 .bar { background: #e5e7eb; border-radius: 4px; height: 10px; overflow: hidden; }
 #run-bar { background: #2563eb; height: 100%; width: 0; transition: width .3s; }
 #topbar #new-run { background: #2563eb; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+#topbar #combine-toggle,
+#topbar #combine-go,
+#topbar #clip-label {
+  background: #0d9488; color: #fff; border: 0; border-radius: 4px;
+  padding: 5px 10px; cursor: pointer; font-size: 12px;
+}
+#topbar #combine-go { background: #16a34a; }
+#topbar #clip-label { display: inline-block; }

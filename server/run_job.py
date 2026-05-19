@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import db
 from .cog import to_cog
-from .settings import RUNS_DIR, MOSAICS_DIR, TRACKS_DIR
+from .settings import RUNS_DIR, MOSAICS_DIR, TRACKS_DIR, POLYGONS_DIR
 
 
 class _Throttle:
@@ -101,37 +101,104 @@ def _run_tracks(job: dict, prog: _Throttle) -> dict:
     )
 
 
-def _run_mosaic_tracks(job: dict, prog: _Throttle) -> dict:
+def _run_combine(job: dict, prog: _Throttle) -> dict:
+    """Combine existing run COGs into one mosaic.
+
+    Operates on registered run COGs (the deployed layout: /data/runs/<id>/
+    intensity_cog.tif), NOT the legacy garmin_output tree — so imported
+    historical runs combine too.
+
+    params:
+      run_ids: list of mosaic job ids (W2: merge their COGs)
+      polygon: optional GeoJSON geometry/Feature/FC (W3: pick tracks whose
+               geometry intersects it from the inventory, merge+clip).
+    """
+    import json
     from garmin_core import areas
 
     p = job["params"]
     mosaic_dir = MOSAICS_DIR / job["id"]
     out = mosaic_dir / "mosaic.tif"
 
+    def cog_for_run(run_id: str):
+        j = db.get_job(run_id)
+        if not j or not j.get("result"):
+            return None
+        c = j["result"].get("cog")
+        return c if c and Path(c).exists() else None
+
     clip = None
-    if p.get("clip_polygon_path"):
-        clip = areas.first_polygon(p["clip_polygon_path"])
-        selected = areas.tracks_intersecting_polygon(p["tracks_geojson"], clip)
-        rsd_paths = [t["rsd_file"] for t in selected]
+    if p.get("polygon"):
+        poly = p["polygon"]
+        # Accept a geometry, Feature, or FeatureCollection; persist as an
+        # FC so areas.first_polygon (which expects an FC on disk) works.
+        t = (poly or {}).get("type")
+        if t == "FeatureCollection":
+            fc = poly
+        elif t == "Feature":
+            fc = {"type": "FeatureCollection", "features": [poly]}
+        else:
+            fc = {"type": "FeatureCollection",
+                  "features": [{"type": "Feature", "properties": {},
+                                "geometry": poly}]}
+        poly_path = POLYGONS_DIR / f"{job['id']}.geojson"
+        poly_path.parent.mkdir(parents=True, exist_ok=True)
+        poly_path.write_text(json.dumps(fc))
+        clip = areas.first_polygon(str(poly_path))
+        # Intersect the inventory directly (we only need file_name to map a
+        # track to its registered run COG — no RSD path needed, unlike
+        # areas.tracks_intersecting_polygon which requires file_path).
+        from shapely.geometry import shape
+        from shapely.prepared import prep
+
+        inv = TRACKS_DIR / "rsd_tracks.geojson"
+        fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
+        pc = prep(clip)
+        cogs, names = [], []
+        for feat in fc.get("features", []):
+            g = feat.get("geometry")
+            if not g:
+                continue
+            geom = shape(g)
+            if geom.is_empty or not pc.intersects(geom):
+                continue
+            fn = (feat.get("properties") or {}).get("file_name")
+            if not fn:
+                continue
+            run = db.find_done_mosaic_by_rsd(fn)
+            c = cog_for_run(run["id"]) if run else None
+            if c:
+                cogs.append(c)
+                names.append(fn)
     else:
-        rsd_paths = [Path(x) for x in p["rsd_paths"]]
+        run_ids = p.get("run_ids") or []
+        cogs = [c for c in (cog_for_run(r) for r in run_ids) if c]
+        names = run_ids
 
-    def cb(stage, n, total):
-        prog(stage, n, total)
+    if not cogs:
+        return {"ok": False, "reason": "no source COGs resolved", "rasters": 0}
 
-    result = areas.mosaic_tracks(
-        rsd_paths, out, clip_polygon=clip,
-        raster_name=p.get("raster_name", "intensity.tif"), progress_cb=cb,
-    )
-    if result.get("ok"):
-        result["cog"] = str(to_cog(out, mosaic_dir / "mosaic_cog.tif"))
-    return result
+    prog("combine", 0, len(cogs))
+    mosaic_dir.mkdir(parents=True, exist_ok=True)
+    if clip is not None:
+        ok = areas.merge_and_clip_rasters([Path(c) for c in cogs], clip, out)
+        mode = "merge+clip"
+    else:
+        ok = areas._merge_rasters([Path(c) for c in cogs], out)
+        mode = "merge"
+    prog("combine", len(cogs), len(cogs))
+
+    res = {"ok": bool(ok), "mode": mode, "rasters": len(cogs),
+           "sources": names}
+    if ok:
+        res["cog"] = str(to_cog(out, mosaic_dir / "mosaic_cog.tif"))
+    return res
 
 
 _DISPATCH = {
     "mosaic": _run_mosaic,
     "tracks": _run_tracks,
-    "mosaic_tracks": _run_mosaic_tracks,
+    "combine": _run_combine,
 }
 
 
