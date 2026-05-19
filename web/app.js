@@ -151,6 +151,7 @@ async function boot() {
   $("new-run").hidden = false;
   $("combine-toggle").hidden = false;
   $("layers-toggle").hidden = false;
+  $("data-toggle").hidden = false;
   const init = () => { loadTracks(); loadLayers(); };
   if (map.loaded()) init();
   else map.on("load", init);
@@ -385,77 +386,65 @@ $("run-btn").onclick = startRun;
 
 // --- Phase 5: area polygon layers + per-area deliverable ----------------
 async function loadLayers() {
-  const L = await api("/api/layers").then((r) => r.json());
-  // buffered first so the solid areas outline draws on top of the dashes.
-  for (const kind of ["buffered", "areas"]) {
-    const fc = L[kind];
-    if (!fc) continue;
-    const src = "layer-" + kind;
-    if (map.getSource(src)) { map.getSource(src).setData(fc); continue; }
-    map.addSource(src, { type: "geojson", data: fc });
-    if (kind === "buffered") {
-      map.addLayer({
-        id: src + "-line", type: "line", source: src,
-        paint: { "line-color": "#6b7280", "line-width": 1.5,
-                 "line-dasharray": [2, 2], "line-opacity": 0.55 },
-      });
-    } else {
-      map.addLayer({
-        id: src + "-fill", type: "fill", source: src,
-        paint: { "fill-color": "#7c3aed", "fill-opacity": 0.07 },
-      });
-      map.addLayer({
-        id: src + "-line", type: "line", source: src,
-        paint: { "line-color": "#7c3aed", "line-width": 2 },
-      });
-      map.on("click", src + "-fill", (e) => selectArea(e.features[0]));
-      map.on("mouseenter", src + "-fill",
-        () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", src + "-fill",
-        () => (map.getCanvas().style.cursor = ""));
-    }
-  }
+  const fc = await api("/api/areas.geojson").then((r) => r.json());
+  const src = "layer-areas";
+  if (map.getSource(src)) { map.getSource(src).setData(fc); return; }
+  map.addSource(src, { type: "geojson", data: fc });
+  map.addLayer({
+    id: src + "-fill", type: "fill", source: src,
+    paint: { "fill-color": "#7c3aed", "fill-opacity": 0.07 },
+  });
+  map.addLayer({
+    id: src + "-line", type: "line", source: src,
+    paint: { "line-color": "#7c3aed", "line-width": 2 },
+  });
+  map.on("click", src + "-fill", (e) => selectArea(e.features[0]));
+  map.on("mouseenter", src + "-fill",
+    () => (map.getCanvas().style.cursor = "pointer"));
+  map.on("mouseleave", src + "-fill",
+    () => (map.getCanvas().style.cursor = ""));
 }
 
 async function selectArea(feature) {
   const pr = feature.properties || {};
-  const on = pr.Our_Name, no = pr.TPDW_App_No;
-  $("panel-title").textContent = on || "Area";
+  const id = pr.id;
+  $("panel-title").textContent = pr.Our_Name || "Area";
   $("panel-body").innerHTML = "loading coverage…";
   $("panel").hidden = false;
   removeCog();
 
+  const bufM = 30;
   let cov;
   try {
-    const r = await api(
-      `/api/coverage?our_name=${encodeURIComponent(on)}` +
-      `&app_no=${encodeURIComponent(no)}`
-    );
+    const r = await api(`/api/areas/${id}/coverage?buffer_m=${bufM}`);
     if (!r.ok) throw new Error();
     cov = await r.json();
   } catch {
-    $("panel-body").innerHTML =
-      "No matching buffered polygon for this area.";
+    $("panel-body").innerHTML = "Coverage lookup failed.";
     return;
   }
-  // Highlight-only (no coverage metrics, per spec).
   map.setFilter("tracks-sel",
     ["in", ["get", "file_name"], ["literal", cov.tracks]]);
 
   $("panel-body").innerHTML =
-    `<dl><dt>TPDW App No</dt><dd>${no ?? "—"}</dd></dl>` +
-    `<button id="gen-deliverable" class="badge"
-       style="border:0;cursor:pointer">Generate deliverable</button>` +
-    `<div id="dl-slot"></div>`;
-  $("gen-deliverable").onclick = () => generateDeliverable(on, no);
+    `<dl><dt>TPDW App No</dt><dd>${pr.TPDW_App_No ?? "—"}</dd></dl>` +
+    `<label style="font-size:12px">Buffer (m)
+       <input id="area-buf" type="number" value="${bufM}" min="0" step="5"
+              style="width:70px"></label>
+     <button id="gen-deliverable" class="badge"
+             style="border:0;cursor:pointer;margin-left:8px">
+       Generate deliverable</button>
+     <div id="dl-slot"></div>`;
+  $("gen-deliverable").onclick = () =>
+    generateDeliverable(id, parseFloat($("area-buf").value) || 30);
 }
 
-async function generateDeliverable(on, no) {
+async function generateDeliverable(areaId, bufferM) {
   $("status").textContent = "deliverable: submitting…";
-  const r = await api("/api/jobs/combine", {
+  const r = await api(`/api/areas/${areaId}/mosaic`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: { Our_Name: on, TPDW_App_No: no } }),
+    body: JSON.stringify({ buffer_m: bufferM }),
   });
   if (!r.ok) { $("status").textContent = "deliverable submit failed"; return; }
   const { job_id } = await r.json();
@@ -464,12 +453,15 @@ async function generateDeliverable(on, no) {
     if (res.cog) showCog(res.cog);
     if (res.ok) {
       $("status").textContent =
-        `deliverable ready (${res.rasters} run(s))`;
+        `deliverable ready (${res.rasters} run(s), buffer ${bufferM} m)`;
       const slot = $("dl-slot");
       if (slot)
         slot.innerHTML =
           `<a id="dl-link" href="/api/deliverable/${job_id}">` +
           `Download GeoTIFF</a>`;
+      // refresh layer + table state (has_mosaic, mosaic_job_id)
+      loadLayers();
+      if (!$("data-panel").hidden) loadDataTable();
     } else {
       $("status").textContent =
         "deliverable: " + (res.reason || "failed");
@@ -477,26 +469,111 @@ async function generateDeliverable(on, no) {
   });
 }
 
-async function uploadLayer(kind, file) {
-  const fd = new FormData();
-  fd.append("file", file);
-  $("layers-status").textContent = `uploading ${kind}…`;
-  const r = await api("/api/layers/" + kind, { method: "POST", body: fd });
-  if (!r.ok) { $("layers-status").textContent = kind + " upload failed"; return; }
+async function uploadAreas(file) {
+  const fd = new FormData(); fd.append("file", file);
+  $("layers-status").textContent = "uploading…";
+  const r = await api("/api/areas/upload", { method: "POST", body: fd });
+  if (!r.ok) { $("layers-status").textContent = "upload failed"; return; }
   const j = await r.json();
-  $("layers-status").textContent = `${kind}: ${j.features} feature(s)`;
+  $("layers-status").textContent =
+    `added ${j.added}, updated ${j.updated}` +
+    (j.skipped ? `, skipped ${j.skipped}` : "");
   loadLayers();
+  if (!$("data-panel").hidden) loadDataTable();
 }
 
 $("layers-toggle").onclick = () =>
   ($("layers-box").hidden = !$("layers-box").hidden);
 $("up-areas").onchange = (e) => {
-  const f = e.target.files[0]; if (f) uploadLayer("areas", f);
+  const f = e.target.files[0]; if (f) uploadAreas(f);
   e.target.value = "";
 };
-$("up-buffered").onchange = (e) => {
-  const f = e.target.files[0]; if (f) uploadLayer("buffered", f);
-  e.target.value = "";
+
+// --- Phase 6: data table -------------------------------------------------
+async function loadDataTable() {
+  const rows = await api("/api/areas").then((r) => r.json());
+  $("data-meta").textContent =
+    `${rows.length} area(s) — ${rows.filter((r) => r.has_mosaic).length} have a mosaic`;
+  const tbody = document.querySelector("#data-table tbody");
+  tbody.innerHTML = "";
+  for (const a of rows) {
+    const tr = document.createElement("tr");
+    tr.dataset.id = a.id;
+    tr.innerHTML = `
+      <td>${escapeHtml(a.our_name)}</td>
+      <td>${escapeHtml(a.tpdw_app_no)}</td>
+      <td><input class="note" type="text" value="${escapeAttr(a.notes || "")}"></td>
+      <td><span class="pill ${a.has_mosaic ? "yes" : "no"}">
+        ${a.has_mosaic ? "ready" : "—"}</span></td>
+      <td class="actions">
+        <button class="view">View</button>
+        <input class="buf" type="number" value="30" min="0" step="5" title="buffer (m)">
+        <button class="gen">Generate</button>
+        <a class="dl" ${a.has_mosaic ? `href="/api/deliverable/${a.mosaic_job_id}"`
+                                      : 'aria-disabled="true" href="#"'}>
+          Download</a>
+      </td>`;
+    const note = tr.querySelector(".note");
+    note.addEventListener("change", () => saveNote(a.id, note.value));
+    tr.querySelector(".view").onclick = () => viewArea(a);
+    tr.querySelector(".gen").onclick = () =>
+      generateDeliverable(a.id,
+        parseFloat(tr.querySelector(".buf").value) || 30);
+    tbody.appendChild(tr);
+  }
+}
+
+async function saveNote(id, notes) {
+  await api(`/api/areas/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ notes }),
+  });
+}
+
+async function viewArea(row) {
+  $("data-panel").hidden = true;
+  // pull the geometry to fit bounds + overlay mosaic if present
+  const a = await api(`/api/areas/${row.id}`).then((r) => r.json());
+  const bb = geomBBox(a.geometry);
+  if (bb) map.fitBounds(bb, { padding: 60 });
+  // simulate a map click on this area so the side panel + highlight load
+  selectArea({ properties: {
+    id: a.id, Our_Name: a.our_name, TPDW_App_No: a.tpdw_app_no
+  }});
+  if (row.has_mosaic && row.mosaic_job_id) {
+    // overlay the existing mosaic immediately
+    const j = await api(`/api/jobs/${row.mosaic_job_id}`).then((r) => r.json());
+    const cog = j && j.result && j.result.cog;
+    if (cog) showCog(cog);
+  }
+}
+
+function geomBBox(g) {
+  if (!g) return null;
+  let minX = 180, minY = 90, maxX = -180, maxY = -90;
+  const walk = (c) => {
+    if (typeof c[0] === "number") {
+      if (c[0] < minX) minX = c[0]; if (c[0] > maxX) maxX = c[0];
+      if (c[1] < minY) minY = c[1]; if (c[1] > maxY) maxY = c[1];
+    } else c.forEach(walk);
+  };
+  walk(g.coordinates || []);
+  return maxX >= minX ? [[minX, minY], [maxX, maxY]] : null;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;",
+              '"': "&quot;", "'": "&#39;" }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+$("data-toggle").onclick = () => {
+  const p = $("data-panel");
+  p.hidden = !p.hidden;
+  if (!p.hidden) loadDataTable();
 };
+$("data-close").onclick = () => ($("data-panel").hidden = true);
 
 boot();

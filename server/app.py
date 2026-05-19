@@ -58,9 +58,36 @@ async def _no_store_api(request: Request, call_next):
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
+    _migrate_legacy_layer_file()
     jobs.start_worker()
     if not SHARED_PASSWORD:
         print("!! GARMIN_GUI_PASSWORD is unset — the app is OPEN. Set it in prod.")
+
+
+def _migrate_legacy_layer_file() -> None:
+    """One-shot: if the areas table is empty and the Phase 5 layer file
+    exists on disk, ingest its features so prior uploads aren't lost."""
+    if db.list_areas():
+        return
+    legacy = POLYGONS_DIR / "layer_areas.geojson"
+    if not legacy.exists():
+        return
+    try:
+        payload = json.loads(legacy.read_text())
+    except Exception:
+        return
+    n = 0
+    for feat in payload.get("features", []):
+        props = feat.get("properties") or {}
+        on = props.get("Our_Name")
+        no = props.get("TPDW_App_No")
+        geom = feat.get("geometry")
+        if not (on and no and geom):
+            continue
+        db.upsert_area(str(on), str(no), props, geom)
+        n += 1
+    if n:
+        print(f"migrated {n} area(s) from legacy layer_areas.geojson")
 
 
 @app.on_event("shutdown")
@@ -188,17 +215,35 @@ async def submit_combine(request: Request):
     return {"job_id": job_id}
 
 
-# ---- area polygon layers (Phase 5) --------------------------------------
-_LAYER_FILES = {
-    "areas": POLYGONS_DIR / "layer_areas.geojson",
-    "buffered": POLYGONS_DIR / "layer_buffered.geojson",
-}
+# ---- areas (Phase 6: data-mgmt) -----------------------------------------
+DEFAULT_BUFFER_M = 30.0
 
 
-@app.post("/api/layers/{kind}", dependencies=[AuthDep])
-async def api_layer_upload(kind: str, file: UploadFile = File(...)):
-    if kind not in _LAYER_FILES:
-        raise HTTPException(404, "kind must be 'areas' or 'buffered'")
+def _area_summary(a: dict) -> dict:
+    """Compact row for the table UI."""
+    cog = None
+    if a.get("mosaic_job_id"):
+        j = db.get_job(a["mosaic_job_id"])
+        if j and (j.get("result") or {}).get("cog"):
+            cog = j["result"]["cog"] if Path(j["result"]["cog"]).exists() else None
+    return {
+        "id": a["id"],
+        "our_name": a["our_name"],
+        "tpdw_app_no": a["tpdw_app_no"],
+        "notes": a["notes"],
+        "mosaic_job_id": a["mosaic_job_id"] if cog else None,
+        "has_mosaic": bool(cog),
+        "updated_at": a["updated_at"],
+    }
+
+
+@app.post("/api/areas/upload", dependencies=[AuthDep])
+async def api_areas_upload(file: UploadFile = File(...)):
+    """Upsert polygons from a GeoJSON FeatureCollection.
+
+    Features matched by (Our_Name, TPDW_App_No). Notes and the linked
+    mosaic_job_id are preserved across re-uploads.
+    """
     raw = await file.read()
     try:
         payload = json.loads(raw)
@@ -206,43 +251,85 @@ async def api_layer_upload(kind: str, file: UploadFile = File(...)):
         raise HTTPException(400, "not valid JSON")
     if payload.get("type") != "FeatureCollection":
         raise HTTPException(400, "expected a GeoJSON FeatureCollection")
-    _LAYER_FILES[kind].write_bytes(raw)
-    return {"ok": True, "kind": kind,
-            "features": len(payload.get("features", []))}
+    added = updated = skipped = 0
+    seen_ids = set()
+    for feat in payload.get("features", []):
+        props = feat.get("properties") or {}
+        on = props.get("Our_Name")
+        no = props.get("TPDW_App_No")
+        geom = feat.get("geometry")
+        if not (on and no and geom):
+            skipped += 1
+            continue
+        existing = db.get_area_by_key(str(on), str(no))
+        area_id = db.upsert_area(str(on), str(no), props, geom)
+        seen_ids.add(area_id)
+        if existing:
+            updated += 1
+        else:
+            added += 1
+    return {"ok": True, "added": added, "updated": updated,
+            "skipped": skipped, "total": len(seen_ids)}
 
 
-@app.get("/api/layers", dependencies=[AuthDep])
-async def api_layers():
-    out = {}
-    for kind, path in _LAYER_FILES.items():
-        out[kind] = json.loads(path.read_text()) if path.exists() else None
-    return out
+@app.get("/api/areas", dependencies=[AuthDep])
+async def api_areas_list():
+    return [_area_summary(a) for a in db.list_areas()]
 
 
-@app.get("/api/coverage", dependencies=[AuthDep])
-async def api_coverage(our_name: str, app_no: str):
-    """Tracks intersecting the buffered polygon for one area (highlight set).
+@app.get("/api/areas.geojson", dependencies=[AuthDep])
+async def api_areas_geojson():
+    """FeatureCollection for the map. Each feature carries the row id."""
+    feats = []
+    for a in db.list_areas():
+        feats.append({
+            "type": "Feature",
+            "properties": {
+                "id": a["id"],
+                "Our_Name": a["our_name"],
+                "TPDW_App_No": a["tpdw_app_no"],
+                "has_mosaic": bool(a.get("mosaic_job_id")),
+            },
+            "geometry": a["geometry"],
+        })
+    return {"type": "FeatureCollection", "features": feats}
 
-    Returns the track file_names and which already have a mosaic run.
-    """
-    buf = _LAYER_FILES["buffered"]
-    if not buf.exists():
-        raise HTTPException(400, "no buffered layer uploaded")
+
+@app.get("/api/areas/{area_id}", dependencies=[AuthDep])
+async def api_area_get(area_id: str):
+    a = db.get_area(area_id)
+    if not a:
+        raise HTTPException(404, "no such area")
+    return a
+
+
+@app.patch("/api/areas/{area_id}", dependencies=[AuthDep])
+async def api_area_patch(area_id: str, request: Request):
+    body = await request.json()
+    if "notes" in body:
+        if not db.update_area_notes(area_id, str(body["notes"])):
+            raise HTTPException(404, "no such area")
+    return db.get_area(area_id)
+
+
+@app.delete("/api/areas/{area_id}", dependencies=[AuthDep])
+async def api_area_delete(area_id: str):
+    if not db.delete_area(area_id):
+        raise HTTPException(404, "no such area")
+    return {"ok": True}
+
+
+@app.get("/api/areas/{area_id}/coverage", dependencies=[AuthDep])
+async def api_area_coverage(area_id: str, buffer_m: float = DEFAULT_BUFFER_M):
+    """Tracks intersecting this area's polygon buffered by buffer_m meters."""
+    from .geo import buffer_wgs84
     from shapely.geometry import shape
     from shapely.prepared import prep
 
-    fc = json.loads(buf.read_text())
-    match = None
-    for feat in fc.get("features", []):
-        pr = feat.get("properties") or {}
-        if (str(pr.get("Our_Name")) == our_name
-                and str(pr.get("TPDW_App_No")) == app_no):
-            match = feat
-            break
-    if match is None or not match.get("geometry"):
-        raise HTTPException(404, "no matching buffered polygon")
-
-    clip = prep(shape(match["geometry"]))
+    a = db.get_area(area_id)
+    if not a or not a.get("geometry"):
+        raise HTTPException(404, "no such area")
+    clip = prep(buffer_wgs84(a["geometry"], buffer_m))
     inv = TRACKS_DIR / "rsd_tracks.geojson"
     inv_fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
     tracks, with_mosaic = [], []
@@ -260,7 +347,21 @@ async def api_coverage(our_name: str, app_no: str):
         if db.find_done_mosaic_by_rsd(fn):
             with_mosaic.append(fn)
     return {"tracks": tracks, "with_mosaic": with_mosaic,
-            "total": len(tracks)}
+            "total": len(tracks), "buffer_m": buffer_m}
+
+
+@app.post("/api/areas/{area_id}/mosaic", dependencies=[AuthDep])
+async def api_area_mosaic(area_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    buffer_m = float(body.get("buffer_m") or DEFAULT_BUFFER_M)
+    if not db.get_area(area_id):
+        raise HTTPException(404, "no such area")
+    job_id = jobs.enqueue("combine",
+                           {"area_id": area_id, "buffer_m": buffer_m})
+    return {"job_id": job_id, "buffer_m": buffer_m}
 
 
 @app.get("/api/deliverable/{job_id}", dependencies=[AuthDep])

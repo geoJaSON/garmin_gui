@@ -156,28 +156,27 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
 
     clip = None
     area_name = None
+    area_id = None
 
-    if p.get("area"):
-        # Phase 5 deliverable: clip by the matching BUFFERED feature.
-        key = p["area"]
-        buf = POLYGONS_DIR / "layer_buffered.geojson"
-        if not buf.exists():
-            return {"ok": False, "reason": "no buffered layer uploaded",
-                    "rasters": 0}
-        fc = json.loads(buf.read_text())
-        match = None
-        for feat in fc.get("features", []):
-            pr = feat.get("properties") or {}
-            if (str(pr.get("Our_Name")) == str(key.get("Our_Name"))
-                    and str(pr.get("TPDW_App_No")) == str(key.get("TPDW_App_No"))):
-                match = feat
-                break
-        if match is None or not match.get("geometry"):
-            return {"ok": False, "reason": "no matching buffered polygon",
-                    "rasters": 0}
-        clip = shape(match["geometry"])
+    if p.get("area_id") or p.get("area"):
+        # Phase 6 deliverable: clip by the area's polygon buffered on the fly.
+        from .geo import buffer_wgs84
+
+        area = None
+        if p.get("area_id"):
+            area = db.get_area(p["area_id"])
+        elif p.get("area"):  # back-compat key shape
+            k = p["area"]
+            area = db.get_area_by_key(
+                str(k.get("Our_Name")), str(k.get("TPDW_App_No"))
+            )
+        if not area or not area.get("geometry"):
+            return {"ok": False, "reason": "no such area", "rasters": 0}
+        area_id = area["id"]
+        buffer_m = float(p.get("buffer_m") or 30.0)
+        clip = buffer_wgs84(area["geometry"], buffer_m)
         area_name = areas_mod.sanitize_name(
-            str(key.get("Our_Name") or key.get("TPDW_App_No") or "area")
+            area["our_name"] or area["tpdw_app_no"] or "area"
         )
         cogs, names = cogs_intersecting(clip)
 
@@ -217,11 +216,13 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
     prog("combine", len(cogs), len(cogs))
 
     res = {"ok": bool(ok), "mode": mode, "rasters": len(cogs),
-           "sources": names, "area_name": area_name}
+           "sources": names, "area_name": area_name, "area_id": area_id}
     if ok:
         res["cog"] = str(to_cog(out, mosaic_dir / "mosaic_cog.tif"))
         # The plain clipped GeoTIFF is the downloadable deliverable.
         res["deliverable"] = str(out)
+        if area_id:
+            db.set_area_mosaic_job(area_id, job["id"])
     return res
 
 

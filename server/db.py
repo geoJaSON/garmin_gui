@@ -19,7 +19,7 @@ from .settings import DB_PATH
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id          TEXT PRIMARY KEY,
-    kind        TEXT NOT NULL,              -- mosaic | tracks | mosaic_tracks
+    kind        TEXT NOT NULL,              -- mosaic | tracks | combine
     status      TEXT NOT NULL,              -- queued | running | done | error | cancelled
     params      TEXT NOT NULL,              -- JSON input
     progress    TEXT,                       -- JSON {desc,n,total,pct}
@@ -30,6 +30,20 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS areas (
+    id            TEXT PRIMARY KEY,
+    our_name      TEXT NOT NULL,
+    tpdw_app_no   TEXT NOT NULL,
+    properties    TEXT NOT NULL,            -- JSON (full original feature props)
+    geometry      TEXT NOT NULL,            -- JSON GeoJSON geometry, WGS84
+    notes         TEXT NOT NULL DEFAULT '',
+    mosaic_job_id TEXT,                     -- last successful deliverable
+    created_at    REAL NOT NULL,
+    updated_at    REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_areas_key
+    ON areas(our_name, tpdw_app_no);
 """
 
 
@@ -154,3 +168,89 @@ def finish_job(job_id: str, *, result: Any = None, error: str = None) -> None:
                 job_id,
             ),
         )
+
+
+# ---- areas (Phase 6) ----------------------------------------------------
+def _row_to_area(row: sqlite3.Row) -> dict:
+    a = dict(row)
+    a["properties"] = json.loads(a["properties"]) if a["properties"] else {}
+    a["geometry"] = json.loads(a["geometry"]) if a["geometry"] else None
+    return a
+
+
+def upsert_area(our_name: str, tpdw_app_no: str,
+                properties: dict, geometry: dict) -> str:
+    """Insert if (our_name, tpdw_app_no) is new, else update geometry/properties.
+
+    Notes and mosaic_job_id are PRESERVED on update so re-uploading the layer
+    doesn't clobber per-area state.
+    """
+    now = time.time()
+    props_j = json.dumps(properties or {})
+    geom_j = json.dumps(geometry)
+    with connect() as c:
+        row = c.execute(
+            "SELECT id FROM areas WHERE our_name=? AND tpdw_app_no=?",
+            (our_name, tpdw_app_no),
+        ).fetchone()
+        if row:
+            c.execute(
+                "UPDATE areas SET properties=?, geometry=?, updated_at=? "
+                "WHERE id=?",
+                (props_j, geom_j, now, row["id"]),
+            )
+            return row["id"]
+        area_id = uuid.uuid4().hex
+        c.execute(
+            "INSERT INTO areas (id, our_name, tpdw_app_no, properties, "
+            "geometry, notes, mosaic_job_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, '', NULL, ?, ?)",
+            (area_id, our_name, tpdw_app_no, props_j, geom_j, now, now),
+        )
+        return area_id
+
+
+def list_areas() -> list[dict]:
+    with connect() as c:
+        rows = c.execute(
+            "SELECT * FROM areas ORDER BY our_name, tpdw_app_no"
+        ).fetchall()
+    return [_row_to_area(r) for r in rows]
+
+
+def get_area(area_id: str) -> Optional[dict]:
+    with connect() as c:
+        row = c.execute("SELECT * FROM areas WHERE id=?", (area_id,)).fetchone()
+    return _row_to_area(row) if row else None
+
+
+def get_area_by_key(our_name: str, tpdw_app_no: str) -> Optional[dict]:
+    with connect() as c:
+        row = c.execute(
+            "SELECT * FROM areas WHERE our_name=? AND tpdw_app_no=?",
+            (our_name, tpdw_app_no),
+        ).fetchone()
+    return _row_to_area(row) if row else None
+
+
+def update_area_notes(area_id: str, notes: str) -> bool:
+    with connect() as c:
+        cur = c.execute(
+            "UPDATE areas SET notes=?, updated_at=? WHERE id=?",
+            (notes, time.time(), area_id),
+        )
+        return cur.rowcount > 0
+
+
+def set_area_mosaic_job(area_id: str, job_id: str) -> None:
+    with connect() as c:
+        c.execute(
+            "UPDATE areas SET mosaic_job_id=?, updated_at=? WHERE id=?",
+            (job_id, time.time(), area_id),
+        )
+
+
+def delete_area(area_id: str) -> bool:
+    with connect() as c:
+        cur = c.execute("DELETE FROM areas WHERE id=?", (area_id,))
+        return cur.rowcount > 0
