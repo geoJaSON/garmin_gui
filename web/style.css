@@ -1,4 +1,8 @@
 * { box-sizing: border-box; }
+/* The `hidden` attribute must always win over id-level display rules
+   (e.g. #login{display:flex}) — otherwise toggling .hidden does nothing
+   and overlays like the login screen never disappear. */
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 #map { position: absolute; inset: 0; }
 
