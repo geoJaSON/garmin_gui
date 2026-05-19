@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
 CREATE TABLE IF NOT EXISTS areas (
     id            TEXT PRIMARY KEY,
     our_name      TEXT NOT NULL,
-    tpdw_app_no   TEXT NOT NULL,
+    tpwd_app_no   TEXT NOT NULL,
     properties    TEXT NOT NULL,            -- JSON (full original feature props)
     geometry      TEXT NOT NULL,            -- JSON GeoJSON geometry, WGS84
     notes         TEXT NOT NULL DEFAULT '',
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS areas (
     updated_at    REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_areas_key
-    ON areas(our_name, tpdw_app_no);
+    ON areas(our_name, tpwd_app_no);
 """
 
 
@@ -62,6 +62,12 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as c:
         c.executescript(SCHEMA)
+        # One-shot column rename if an older DB was created with the
+        # original (typo'd) column name. Idempotent.
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(areas)")}
+        if "tpdw_app_no" in cols and "tpwd_app_no" not in cols:
+            c.execute("ALTER TABLE areas RENAME COLUMN "
+                      "tpdw_app_no TO tpwd_app_no")
 
 
 def _row_to_job(row: sqlite3.Row) -> dict:
@@ -178,9 +184,9 @@ def _row_to_area(row: sqlite3.Row) -> dict:
     return a
 
 
-def upsert_area(our_name: str, tpdw_app_no: str,
+def upsert_area(our_name: str, tpwd_app_no: str,
                 properties: dict, geometry: dict) -> str:
-    """Insert if (our_name, tpdw_app_no) is new, else update geometry/properties.
+    """Insert if (our_name, tpwd_app_no) is new, else update geometry/properties.
 
     Notes and mosaic_job_id are PRESERVED on update so re-uploading the layer
     doesn't clobber per-area state.
@@ -190,8 +196,8 @@ def upsert_area(our_name: str, tpdw_app_no: str,
     geom_j = json.dumps(geometry)
     with connect() as c:
         row = c.execute(
-            "SELECT id FROM areas WHERE our_name=? AND tpdw_app_no=?",
-            (our_name, tpdw_app_no),
+            "SELECT id FROM areas WHERE our_name=? AND tpwd_app_no=?",
+            (our_name, tpwd_app_no),
         ).fetchone()
         if row:
             c.execute(
@@ -202,10 +208,10 @@ def upsert_area(our_name: str, tpdw_app_no: str,
             return row["id"]
         area_id = uuid.uuid4().hex
         c.execute(
-            "INSERT INTO areas (id, our_name, tpdw_app_no, properties, "
+            "INSERT INTO areas (id, our_name, tpwd_app_no, properties, "
             "geometry, notes, mosaic_job_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, '', NULL, ?, ?)",
-            (area_id, our_name, tpdw_app_no, props_j, geom_j, now, now),
+            (area_id, our_name, tpwd_app_no, props_j, geom_j, now, now),
         )
         return area_id
 
@@ -213,7 +219,7 @@ def upsert_area(our_name: str, tpdw_app_no: str,
 def list_areas() -> list[dict]:
     with connect() as c:
         rows = c.execute(
-            "SELECT * FROM areas ORDER BY our_name, tpdw_app_no"
+            "SELECT * FROM areas ORDER BY our_name, tpwd_app_no"
         ).fetchall()
     return [_row_to_area(r) for r in rows]
 
@@ -224,11 +230,11 @@ def get_area(area_id: str) -> Optional[dict]:
     return _row_to_area(row) if row else None
 
 
-def get_area_by_key(our_name: str, tpdw_app_no: str) -> Optional[dict]:
+def get_area_by_key(our_name: str, tpwd_app_no: str) -> Optional[dict]:
     with connect() as c:
         row = c.execute(
-            "SELECT * FROM areas WHERE our_name=? AND tpdw_app_no=?",
-            (our_name, tpdw_app_no),
+            "SELECT * FROM areas WHERE our_name=? AND tpwd_app_no=?",
+            (our_name, tpwd_app_no),
         ).fetchone()
     return _row_to_area(row) if row else None
 

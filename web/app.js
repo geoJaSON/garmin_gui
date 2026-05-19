@@ -427,7 +427,7 @@ async function selectArea(feature) {
     ["in", ["get", "file_name"], ["literal", cov.tracks]]);
 
   $("panel-body").innerHTML =
-    `<dl><dt>TPDW App No</dt><dd>${pr.TPDW_App_No ?? "—"}</dd></dl>` +
+    `<dl><dt>TPWD App No</dt><dd>${pr.TPWD_App_No ?? "—"}</dd></dl>` +
     `<label style="font-size:12px">Buffer (m)
        <input id="area-buf" type="number" value="${bufM}" min="0" step="5"
               style="width:70px"></label>
@@ -508,7 +508,7 @@ async function loadDataTable() {
     tr.dataset.id = a.id;
     tr.innerHTML = `
       <td>${escapeHtml(a.our_name)}</td>
-      <td>${escapeHtml(a.tpdw_app_no)}</td>
+      <td>${escapeHtml(a.tpwd_app_no)}</td>
       <td><input class="note" type="text" value="${escapeAttr(a.notes || "")}"></td>
       <td><span class="pill ${a.has_mosaic ? "yes" : "no"}">
         ${a.has_mosaic ? "ready" : "—"}</span></td>
@@ -546,7 +546,7 @@ async function viewArea(row) {
   if (bb) map.fitBounds(bb, { padding: 60 });
   // simulate a map click on this area so the side panel + highlight load
   selectArea({ properties: {
-    id: a.id, Our_Name: a.our_name, TPDW_App_No: a.tpdw_app_no
+    id: a.id, Our_Name: a.our_name, TPWD_App_No: a.tpwd_app_no
   }});
   if (row.has_mosaic && row.mosaic_job_id) {
     // overlay the existing mosaic immediately

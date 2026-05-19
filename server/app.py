@@ -80,7 +80,7 @@ def _migrate_legacy_layer_file() -> None:
     for feat in payload.get("features", []):
         props = feat.get("properties") or {}
         on = props.get("Our_Name")
-        no = props.get("TPDW_App_No")
+        no = props.get("TPWD_App_No")
         geom = feat.get("geometry")
         if not (on and no and geom):
             continue
@@ -206,7 +206,7 @@ async def submit_combine(request: Request):
     body = await request.json()
     run_ids = body.get("run_ids")
     polygon = body.get("polygon")
-    area = body.get("area")  # {"Our_Name":..,"TPDW_App_No":..} -> deliverable
+    area = body.get("area")  # {"Our_Name":..,"TPWD_App_No":..} -> deliverable
     if not run_ids and not polygon and not area:
         raise HTTPException(400, "need run_ids, polygon, or area")
     job_id = jobs.enqueue(
@@ -229,7 +229,7 @@ def _area_summary(a: dict) -> dict:
     return {
         "id": a["id"],
         "our_name": a["our_name"],
-        "tpdw_app_no": a["tpdw_app_no"],
+        "tpwd_app_no": a["tpwd_app_no"],
         "notes": a["notes"],
         "mosaic_job_id": a["mosaic_job_id"] if cog else None,
         "has_mosaic": bool(cog),
@@ -260,7 +260,7 @@ def _norm(v):
 async def api_areas_upload(file: UploadFile = File(...)):
     """Upsert polygons from a GeoJSON FeatureCollection.
 
-    Features matched case-insensitively on (Our_Name, TPDW_App_No). Notes
+    Features matched case-insensitively on (Our_Name, TPWD_App_No). Notes
     and the linked mosaic_job_id are preserved across re-uploads.
     """
     raw = await file.read()
@@ -279,13 +279,15 @@ async def api_areas_upload(file: UploadFile = File(...)):
         if i < 5:
             sample_keys.update(map(str, props.keys()))
         on = _norm(_ci_get(props, "Our_Name"))
-        no = _norm(_ci_get(props, "TPDW_App_No"))
+        # Real data uses TPWD_App_No; accept the old typo TPDW_App_No too.
+        no = _norm(_ci_get(props, "TPWD_App_No")
+                   or _ci_get(props, "TPDW_App_No"))
         geom = feat.get("geometry")
         miss = []
         if not on:
             miss.append("Our_Name")
         if not no:
-            miss.append("TPDW_App_No")
+            miss.append("TPWD_App_No")
         if not geom:
             miss.append("geometry")
         if miss:
@@ -323,7 +325,7 @@ async def api_areas_geojson():
             "properties": {
                 "id": a["id"],
                 "Our_Name": a["our_name"],
-                "TPDW_App_No": a["tpdw_app_no"],
+                "TPWD_App_No": a["tpwd_app_no"],
                 "has_mosaic": bool(a.get("mosaic_job_id")),
             },
             "geometry": a["geometry"],

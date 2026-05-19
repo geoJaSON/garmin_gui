@@ -111,7 +111,7 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
     params:
       run_ids: list of mosaic job ids (W2: merge their COGs)
       polygon: GeoJSON geometry/Feature/FC (W3: tracks intersecting it)
-      area:    {"Our_Name":..,"TPDW_App_No":..} -> clip by the matching
+      area:    {"Our_Name":..,"TPWD_App_No":..} -> clip by the matching
                feature in the buffered layer; the result is the
                downloadable per-area deliverable (Phase 5).
     """
@@ -168,7 +168,7 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         elif p.get("area"):  # back-compat key shape
             k = p["area"]
             area = db.get_area_by_key(
-                str(k.get("Our_Name")), str(k.get("TPDW_App_No"))
+                str(k.get("Our_Name")), str(k.get("TPWD_App_No"))
             )
         if not area or not area.get("geometry"):
             return {"ok": False, "reason": "no such area", "rasters": 0}
@@ -176,7 +176,7 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         buffer_m = float(p.get("buffer_m") or 30.0)
         clip = buffer_wgs84(area["geometry"], buffer_m)
         area_name = areas_mod.sanitize_name(
-            area["our_name"] or area["tpdw_app_no"] or "area"
+            area["our_name"] or area["tpwd_app_no"] or "area"
         )
         cogs, names = cogs_intersecting(clip)
 
