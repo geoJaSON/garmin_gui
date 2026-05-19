@@ -42,8 +42,15 @@ async def _no_store_api(request: Request, call_next):
     though login succeeded. Tiles are intentionally left cacheable.
     """
     resp = await call_next(request)
-    if request.url.path.startswith("/api"):
+    path = request.url.path
+    if path.startswith("/api"):
         resp.headers["Cache-Control"] = "no-store"
+    elif path.startswith("/tiles"):
+        pass  # COG tiles are immutable per run — let them cache
+    else:
+        # SPA assets: always revalidate so a deploy can't leave a client
+        # running stale JS (etag makes this a cheap 304 when unchanged).
+        resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 

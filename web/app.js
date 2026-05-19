@@ -1,7 +1,10 @@
 "use strict";
 
 // --- tiny API helper -----------------------------------------------------
-const api = (path, opts) => fetch(path, Object.assign({ credentials: "same-origin" }, opts));
+// cache:"no-store" so the browser never replays a stale API response
+// (e.g. a pre-login /api/me) regardless of what's already in its cache.
+const api = (path, opts) =>
+  fetch(path, Object.assign({ credentials: "same-origin", cache: "no-store" }, opts));
 const $ = (id) => document.getElementById(id);
 
 // --- map -----------------------------------------------------------------
