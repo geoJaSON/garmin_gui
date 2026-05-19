@@ -405,6 +405,10 @@ async function loadLayers() {
     () => (map.getCanvas().style.cursor = ""));
 }
 
+// Backend takes meters; UI works in feet for the survey/permitting workflow.
+const FT_TO_M = 0.3048;
+const DEFAULT_BUFFER_FT = 200;
+
 async function selectArea(feature) {
   const pr = feature.properties || {};
   const id = pr.id;
@@ -413,10 +417,12 @@ async function selectArea(feature) {
   $("panel").hidden = false;
   removeCog();
 
-  const bufM = 30;
+  const bufFt = DEFAULT_BUFFER_FT;
   let cov;
   try {
-    const r = await api(`/api/areas/${id}/coverage?buffer_m=${bufM}`);
+    const r = await api(
+      `/api/areas/${id}/coverage?buffer_m=${bufFt * FT_TO_M}`
+    );
     if (!r.ok) throw new Error();
     cov = await r.json();
   } catch {
@@ -428,15 +434,16 @@ async function selectArea(feature) {
 
   $("panel-body").innerHTML =
     `<dl><dt>TPWD App No</dt><dd>${pr.TPWD_App_No ?? "—"}</dd></dl>` +
-    `<label style="font-size:12px">Buffer (m)
-       <input id="area-buf" type="number" value="${bufM}" min="0" step="5"
+    `<label style="font-size:12px">Buffer (ft)
+       <input id="area-buf" type="number" value="${bufFt}" min="0" step="10"
               style="width:70px"></label>
      <button id="gen-deliverable" class="badge"
              style="border:0;cursor:pointer;margin-left:8px">
        Generate deliverable</button>
      <div id="dl-slot"></div>`;
   $("gen-deliverable").onclick = () =>
-    generateDeliverable(id, parseFloat($("area-buf").value) || 30);
+    generateDeliverable(id,
+      (parseFloat($("area-buf").value) || DEFAULT_BUFFER_FT) * FT_TO_M);
 }
 
 async function generateDeliverable(areaId, bufferM) {
@@ -452,8 +459,9 @@ async function generateDeliverable(areaId, bufferM) {
     const res = job.result || {};
     if (res.cog) showCog(res.cog);
     if (res.ok) {
+      const ft = Math.round(bufferM / FT_TO_M);
       $("status").textContent =
-        `deliverable ready (${res.rasters} run(s), buffer ${bufferM} m)`;
+        `deliverable ready (${res.rasters} run(s), buffer ${ft} ft)`;
       const slot = $("dl-slot");
       if (slot)
         slot.innerHTML =
@@ -514,7 +522,7 @@ async function loadDataTable() {
         ${a.has_mosaic ? "ready" : "—"}</span></td>
       <td class="actions">
         <button class="view">View</button>
-        <input class="buf" type="number" value="30" min="0" step="5" title="buffer (m)">
+        <input class="buf" type="number" value="${DEFAULT_BUFFER_FT}" min="0" step="10" title="buffer (ft)">
         <button class="gen">Generate</button>
         <a class="dl" ${a.has_mosaic ? `href="/api/deliverable/${a.mosaic_job_id}"`
                                       : 'aria-disabled="true" href="#"'}>
@@ -525,7 +533,8 @@ async function loadDataTable() {
     tr.querySelector(".view").onclick = () => viewArea(a);
     tr.querySelector(".gen").onclick = () =>
       generateDeliverable(a.id,
-        parseFloat(tr.querySelector(".buf").value) || 30);
+        (parseFloat(tr.querySelector(".buf").value) || DEFAULT_BUFFER_FT)
+          * FT_TO_M);
     tbody.appendChild(tr);
   }
 }
