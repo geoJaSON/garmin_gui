@@ -1,0 +1,44 @@
+# VPS deployment: app + Caddy (auto-HTTPS). Set secrets in a .env file:
+#   DOMAIN=garmin.example.com
+#   ACME_EMAIL=you@example.com
+#   GARMIN_GUI_PASSWORD=...           # shared password
+#   GARMIN_GUI_SECRET=...             # stable session signing key
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      GARMIN_GUI_DATA_DIR: /data
+      GARMIN_GUI_PASSWORD: ${GARMIN_GUI_PASSWORD}
+      GARMIN_GUI_SECRET: ${GARMIN_GUI_SECRET}
+    volumes:
+      - garmin_data:/data            # the 400 GB disk lives here
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else sys.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  garmin_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,11 @@
+# Automatic Let's Encrypt HTTPS. Set DOMAIN + ACME email via env in compose.
+{$DOMAIN} {
+	encode zstd gzip
+	# SSE needs unbuffered, long-lived responses.
+	reverse_proxy app:8000 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+		}
+	}
+}

@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+garmin_output_*/
+*.tif
+survey_reports/
+application_area_mosaics/
+*.sqlite
+.env
+/data/
+.env
+/Sample_Data/

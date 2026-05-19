@@ -1,0 +1,9 @@
+numpy
+pandas
+scipy
+rasterio
+tqdm
+pyproj
+pingverter
+shapely
+python-docx

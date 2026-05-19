@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Garmin Sidescan</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="map"></div>
+
+<div id="topbar">
+  <strong>Garmin Sidescan</strong>
+  <span id="status">…</span>
+  <button id="logout" hidden>log out</button>
+</div>
+
+<aside id="panel" hidden>
+  <button id="panel-close" title="close">×</button>
+  <h2 id="panel-title">Track</h2>
+  <div id="panel-body"></div>
+</aside>
+
+<div id="login" hidden>
+  <form id="login-form">
+    <h2>Garmin Sidescan</h2>
+    <p>Enter the shared password.</p>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Password" />
+    <button type="submit">Enter</button>
+    <p id="login-error" class="error" hidden>Wrong password</p>
+  </form>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

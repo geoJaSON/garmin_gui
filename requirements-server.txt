@@ -1,0 +1,9 @@
+# Server stack. Pipeline deps come from requirements.txt.
+-r requirements.txt
+
+fastapi
+uvicorn[standard]
+itsdangerous          # Starlette SessionMiddleware (signed cookie)
+python-multipart      # form/file uploads
+titiler.core          # in-process COG tile server
+rio-cogeo             # GeoTIFF -> COG on write
