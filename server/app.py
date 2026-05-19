@@ -32,6 +32,21 @@ app = FastAPI(title="Garmin Sidescan GUI")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, https_only=False)
 
 
+@app.middleware("http")
+async def _no_store_api(request: Request, call_next):
+    """Stop the browser caching API responses.
+
+    The SPA calls GET /api/me before and after login with an identical
+    URL+method; without this the browser replays the cached pre-login
+    {"authed":false} and the user is stuck on the password screen even
+    though login succeeded. Tiles are intentionally left cacheable.
+    """
+    resp = await call_next(request)
+    if request.url.path.startswith("/api"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.on_event("startup")
 def _startup() -> None:
     db.init_db()
