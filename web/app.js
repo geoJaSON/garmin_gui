@@ -475,9 +475,16 @@ async function uploadAreas(file) {
   const r = await api("/api/areas/upload", { method: "POST", body: fd });
   if (!r.ok) { $("layers-status").textContent = "upload failed"; return; }
   const j = await r.json();
-  $("layers-status").textContent =
-    `added ${j.added}, updated ${j.updated}` +
-    (j.skipped ? `, skipped ${j.skipped}` : "");
+  let msg = `added ${j.added}, updated ${j.updated}` +
+            (j.skipped ? `, skipped ${j.skipped}` : "");
+  // When everything got skipped, show what was wrong + which property
+  // keys the file actually had so the mismatch is obvious.
+  if (j.added === 0 && j.updated === 0 && j.skipped > 0) {
+    msg += `\nFirst issues:\n- ${(j.skipped_reasons || []).join("\n- ")}`;
+    msg += `\nProperty keys seen: ${(j.sample_property_keys || []).join(", ")}`;
+  }
+  $("layers-status").textContent = msg;
+  $("layers-status").style.whiteSpace = "pre-wrap";
   loadLayers();
   if (!$("data-panel").hidden) loadDataTable();
 }

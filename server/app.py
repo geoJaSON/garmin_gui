@@ -237,12 +237,31 @@ def _area_summary(a: dict) -> dict:
     }
 
 
+def _ci_get(d: dict, name: str):
+    """Case-insensitive property lookup."""
+    if not isinstance(d, dict):
+        return None
+    target = name.lower()
+    for k, v in d.items():
+        if str(k).lower() == target:
+            return v
+    return None
+
+
+def _norm(v):
+    """Treat None/empty/whitespace as missing; everything else stringifies."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s else None
+
+
 @app.post("/api/areas/upload", dependencies=[AuthDep])
 async def api_areas_upload(file: UploadFile = File(...)):
     """Upsert polygons from a GeoJSON FeatureCollection.
 
-    Features matched by (Our_Name, TPDW_App_No). Notes and the linked
-    mosaic_job_id are preserved across re-uploads.
+    Features matched case-insensitively on (Our_Name, TPDW_App_No). Notes
+    and the linked mosaic_job_id are preserved across re-uploads.
     """
     raw = await file.read()
     try:
@@ -253,23 +272,40 @@ async def api_areas_upload(file: UploadFile = File(...)):
         raise HTTPException(400, "expected a GeoJSON FeatureCollection")
     added = updated = skipped = 0
     seen_ids = set()
-    for feat in payload.get("features", []):
+    skip_reasons: list[str] = []
+    sample_keys: set[str] = set()
+    for i, feat in enumerate(payload.get("features", [])):
         props = feat.get("properties") or {}
-        on = props.get("Our_Name")
-        no = props.get("TPDW_App_No")
+        if i < 5:
+            sample_keys.update(map(str, props.keys()))
+        on = _norm(_ci_get(props, "Our_Name"))
+        no = _norm(_ci_get(props, "TPDW_App_No"))
         geom = feat.get("geometry")
-        if not (on and no and geom):
+        miss = []
+        if not on:
+            miss.append("Our_Name")
+        if not no:
+            miss.append("TPDW_App_No")
+        if not geom:
+            miss.append("geometry")
+        if miss:
             skipped += 1
+            if len(skip_reasons) < 5:
+                skip_reasons.append(f"feature #{i}: missing " + ", ".join(miss))
             continue
-        existing = db.get_area_by_key(str(on), str(no))
-        area_id = db.upsert_area(str(on), str(no), props, geom)
+        existing = db.get_area_by_key(on, no)
+        area_id = db.upsert_area(on, no, props, geom)
         seen_ids.add(area_id)
         if existing:
             updated += 1
         else:
             added += 1
-    return {"ok": True, "added": added, "updated": updated,
-            "skipped": skipped, "total": len(seen_ids)}
+    return {
+        "ok": True, "added": added, "updated": updated,
+        "skipped": skipped, "total": len(seen_ids),
+        "skipped_reasons": skip_reasons,
+        "sample_property_keys": sorted(sample_keys),
+    }
 
 
 @app.get("/api/areas", dependencies=[AuthDep])
