@@ -223,6 +223,76 @@ async def api_tracks():
     return json.loads(gj.read_text())
 
 
+@app.post("/api/tracks", dependencies=[AuthDep])
+async def api_tracks_upload(file: UploadFile = File(...)):
+    """Replace the server track inventory with an uploaded rsd_tracks.geojson."""
+    raw = await file.read()
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        raise HTTPException(400, "not valid JSON")
+    if payload.get("type") != "FeatureCollection":
+        raise HTTPException(400, "expected a GeoJSON FeatureCollection")
+    (TRACKS_DIR / "rsd_tracks.geojson").write_bytes(raw)
+    return {"ok": True, "features": len(payload.get("features", []))}
+
+
+# ---- storage / data management ------------------------------------------
+def _dir_size(p: Path) -> int:
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+
+
+@app.get("/api/storage", dependencies=[AuthDep])
+async def api_storage():
+    import shutil
+
+    du = shutil.disk_usage(RUNS_DIR)
+    rsds = [
+        {"name": p.name, "size": p.stat().st_size}
+        for p in sorted(RSD_DIR.glob("*"))
+        if p.is_file() and p.suffix.lower() == ".rsd"
+    ]
+    runs = []
+    for j in db.list_jobs(100000):
+        if j["kind"] == "mosaic" and j["status"] == "done" and j.get("result"):
+            rd = RUNS_DIR / j["id"]
+            runs.append({
+                "job_id": j["id"],
+                "rsd_name": j["result"].get("rsd_name"),
+                "imported": bool(j["result"].get("imported")),
+                "size": _dir_size(rd) if rd.exists() else 0,
+            })
+    return {
+        "disk": {"total": du.total, "used": du.used, "free": du.free},
+        "rsd": {"count": len(rsds), "bytes": sum(r["size"] for r in rsds), "items": rsds},
+        "runs": {"count": len(runs), "bytes": sum(r["size"] for r in runs), "items": runs},
+    }
+
+
+@app.delete("/api/runs/{job_id}", dependencies=[AuthDep])
+async def api_delete_run(job_id: str):
+    import shutil
+
+    job = db.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "no such run")
+    rd = RUNS_DIR / job_id
+    if rd.exists():
+        shutil.rmtree(rd, ignore_errors=True)
+    with db.connect() as c:
+        c.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+    return {"ok": True}
+
+
+@app.delete("/api/rsd/{name}", dependencies=[AuthDep])
+async def api_delete_rsd(name: str):
+    target = (RSD_DIR / Path(name).name)
+    if not target.exists():
+        raise HTTPException(404, "no such RSD")
+    target.unlink()
+    return {"ok": True}
+
+
 @app.get("/api/runs", dependencies=[AuthDep])
 async def api_runs():
     """Completed mosaic runs that produced a COG, keyed for the map browser.
