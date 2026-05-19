@@ -75,11 +75,45 @@ def _run_mosaic(job: dict, prog: _Throttle) -> dict:
     except Exception as e:
         print(f"  track append skipped: {e}")
 
+    # --- survey metadata snapshot + weather (Phase 7b) ------------------
+    # Both snapshotted into the job result so future per-area reports
+    # don't depend on the meta CSVs/network still being available.
+    meta_snapshot = None
+    weather = None
+    survey_dt = None
+    try:
+        from .track_metadata import summarize_meta_dir
+        meta_snapshot = summarize_meta_dir(out_dir.parent / "meta")
+    except Exception as e:
+        print(f"  metadata snapshot skipped: {e}")
+    try:
+        from .weather import parse_rsd_datetime, fetch_daily
+        dt = parse_rsd_datetime(src_rsd.name)
+        if dt is not None:
+            survey_dt = dt.isoformat(timespec="minutes")
+            # median lat/lon from the meta CSV (cheap, robust enough)
+            csv = out_dir.parent / "meta" / "All-Garmin-Sonar-MetaData.csv"
+            if csv.exists():
+                import pandas as pd
+                df = pd.read_csv(csv, usecols=lambda c: c in ("lat", "lon"))
+                if {"lat", "lon"}.issubset(df.columns) and len(df):
+                    weather = fetch_daily(
+                        float(df["lat"].median()),
+                        float(df["lon"].median()),
+                        dt.date(),
+                    )
+    except Exception as e:
+        print(f"  weather fetch skipped: {e}")
+
     return {
         "run_id": run_id,
         "processed_dir": str(out_dir),
         "intensity": str(intensity) if intensity.exists() else None,
         "cog": str(cog) if cog.exists() else None,
+        "rsd_name": src_rsd.name,
+        "survey_datetime": survey_dt,
+        "meta": meta_snapshot,
+        "weather": weather,
         "track_added": track_added,
     }
 
@@ -136,7 +170,7 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         inv = TRACKS_DIR / "rsd_tracks.geojson"
         fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
         pc = prep(clip_geom)
-        cg, nm = [], []
+        cg, nm, jids = [], [], []
         for feat in fc.get("features", []):
             g = feat.get("geometry")
             if not g:
@@ -152,7 +186,8 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
             if c:
                 cg.append(c)
                 nm.append(fn)
-        return cg, nm
+                jids.append(run["id"])
+        return cg, nm, jids
 
     clip = None
     area_name = None
@@ -178,7 +213,7 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         area_name = areas_mod.sanitize_name(
             area["our_name"] or area["tpwd_app_no"] or "area"
         )
-        cogs, names = cogs_intersecting(clip)
+        cogs, names, run_jids = cogs_intersecting(clip)
 
     elif p.get("polygon"):
         poly = p["polygon"]
@@ -195,12 +230,13 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         poly_path.parent.mkdir(parents=True, exist_ok=True)
         poly_path.write_text(json.dumps(fcj))
         clip = areas_mod.first_polygon(str(poly_path))
-        cogs, names = cogs_intersecting(clip)
+        cogs, names, run_jids = cogs_intersecting(clip)
 
     else:
         run_ids = p.get("run_ids") or []
         cogs = [c for c in (cog_for_run(r) for r in run_ids) if c]
         names = run_ids
+        run_jids = list(run_ids)
 
     if not cogs:
         return {"ok": False, "reason": "no source COGs resolved", "rasters": 0}
@@ -221,7 +257,22 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         res["cog"] = str(to_cog(out, mosaic_dir / "mosaic_cog.tif"))
         # The plain clipped GeoTIFF is the downloadable deliverable.
         res["deliverable"] = str(out)
+        # Per-area txt report bundled with the GeoTIFF (Phase 7c).
         if area_id:
+            try:
+                from .report import build_metadata_txt
+                area_full = db.get_area(area_id)
+                run_jobs = [db.get_job(j) for j in run_jids]
+                run_jobs = [j for j in run_jobs if j]
+                txt = build_metadata_txt(
+                    area_full, run_jobs, float(p.get("buffer_m") or 0),
+                    mode, res["cog"],
+                )
+                meta_path = mosaic_dir / "metadata.txt"
+                meta_path.write_text(txt)
+                res["metadata_txt"] = str(meta_path)
+            except Exception as e:
+                print(f"  metadata.txt skipped: {e}")
             db.set_area_mosaic_job(area_id, job["id"])
     return res
 

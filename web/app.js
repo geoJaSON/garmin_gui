@@ -565,7 +565,10 @@ async function loadDataTable() {
         <button class="gen">Generate</button>
         <a class="dl" ${a.has_mosaic ? `href="/api/deliverable/${a.mosaic_job_id}"`
                                       : 'aria-disabled="true" href="#"'}>
-          Download</a>
+          GeoTIFF</a>
+        <a class="dl" ${a.has_mosaic ? `href="/api/deliverable/${a.mosaic_job_id}/metadata.txt"`
+                                      : 'aria-disabled="true" href="#"'}>
+          Metadata</a>
       </td>`;
     const note = tr.querySelector(".note");
     note.addEventListener("change", () => saveNote(a.id, note.value));

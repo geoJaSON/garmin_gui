@@ -421,6 +421,24 @@ async def api_deliverable(job_id: str):
     )
 
 
+@app.get("/api/deliverable/{job_id}/metadata.txt", dependencies=[AuthDep])
+async def api_deliverable_metadata(job_id: str):
+    """Download the per-area survey metadata .txt that accompanies the COG."""
+    from fastapi.responses import FileResponse
+
+    job = db.get_job(job_id)
+    if not job or not job.get("result"):
+        raise HTTPException(404, "no such combine job")
+    txt = (job["result"] or {}).get("metadata_txt")
+    if not txt or not Path(txt).exists():
+        raise HTTPException(404, "no metadata.txt for this deliverable")
+    label = (job["result"] or {}).get("area_name") or "mosaic"
+    return FileResponse(
+        txt, media_type="text/plain",
+        filename=f"{label}_metadata.txt",
+    )
+
+
 # ---- job status ---------------------------------------------------------
 @app.get("/api/jobs", dependencies=[AuthDep])
 async def api_jobs():
