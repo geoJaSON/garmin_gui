@@ -101,19 +101,29 @@ async function selectTrack(feature) {
 }
 
 async function showCog(cogPath) {
-  // titiler.core namespaces tile routes by TileMatrixSet; WebMercatorQuad
-  // matches the OSM basemap. tilejson carries the tile URL templates+bounds.
+  // Do NOT trust tilejson's `tiles` URLs — TiTiler's url_for has emitted a
+  // path (/tiles/{tms}/...) that doesn't match its real route
+  // (/tiles/tiles/{tms}/...), 404ing every tile. We build the known-good
+  // endpoint ourselves and use tilejson only for bounds/zoom. Cache-bust
+  // so a stale cached tilejson can't feed old bounds.
+  const enc = encodeURIComponent(cogPath);
   const tj = await api(
-    "/tiles/WebMercatorQuad/tilejson.json?url=" + encodeURIComponent(cogPath)
+    `/tiles/WebMercatorQuad/tilejson.json?url=${enc}&_=${Date.now()}`
   ).then((r) => r.json());
-  // Defensive: force tile URLs onto this page's origin+scheme so a
-  // proxy emitting http:// can't trip mixed-content blocking on HTTPS.
-  const tiles = (tj.tiles || []).map((u) =>
-    u.replace(/^https?:\/\/[^/]+/i, location.origin)
-  );
+
+  const tileUrl =
+    `${location.origin}/tiles/tiles/WebMercatorQuad/{z}/{x}/{y}` +
+    `?url=${enc}&tilesize=512`;
+
   removeCog();
-  map.addSource("cog", { type: "raster", tiles, tileSize: 256,
-                         bounds: tj.bounds });
+  map.addSource("cog", {
+    type: "raster",
+    tiles: [tileUrl],
+    tileSize: 256,
+    bounds: tj.bounds,
+    minzoom: tj.minzoom || 0,
+    maxzoom: tj.maxzoom || 24,
+  });
   map.addLayer({ id: "cog", type: "raster", source: "cog" }, "tracks-line");
   if (tj.bounds) {
     const [w, s, e, n] = tj.bounds;
