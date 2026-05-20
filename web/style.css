@@ -101,6 +101,13 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 #topbar #data-toggle:hover { background: #1e293b; }
 #topbar #new-run { background: #2563eb; color: #fff; font-weight: 600; }
 #topbar #new-run:hover { background: #1d4ed8; }
+#topbar #tracks-toggle {
+  background: #e0f2fe; color: #075985; font-weight: 700;
+}
+#topbar #tracks-toggle:hover { background: #bae6fd; color: #0c4a6e; }
+#topbar #tracks-toggle.is-off {
+  background: #f1f5f9; color: #64748b; font-weight: 600;
+}
 #topbar #layers-toggle,
 #topbar #files-toggle,
 #topbar #logout {
@@ -118,14 +125,6 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
   border: 1px solid #e2e8f0;
 }
 #layers-box strong { display: block; margin-bottom: 8px; }
-#layers-box hr {
-  border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;
-}
-.layer-toggle {
-  display: flex; align-items: center; gap: 8px;
-  color: #334155; font-size: 13px; cursor: pointer;
-}
-.layer-toggle input { accent-color: #0f172a; }
 #dl-link {
   display: inline-block; margin-top: 12px; background: #16a34a;
   color: #fff; padding: 8px 12px; border-radius: 4px; text-decoration: none;
@@ -191,6 +190,11 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 #data-table .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
 #data-table .pill.yes { background: #dcfce7; color: #166534; }
 #data-table .pill.no { background: #f3f4f6; color: #6b7280; }
+#data-table .mosaic-toggle {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
+  color: #334155; font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+#data-table .mosaic-toggle input { accent-color: #0f172a; }
 #data-table .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #data-table button, #data-table a.dl {
   font-size: 12px; padding: 4px 8px; border: 0; border-radius: 3px; cursor: pointer; text-decoration: none;

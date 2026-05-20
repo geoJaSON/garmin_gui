@@ -39,6 +39,7 @@ const AREA_LAYER_IDS = [
   "layer-areas-label",
 ];
 const activeAreaMosaics = new Set();
+let tracksVisible = true;
 
 function setLayerVisibility(ids, visible) {
   const visibility = visible ? "visible" : "none";
@@ -48,8 +49,12 @@ function setLayerVisibility(ids, visible) {
 }
 
 function applyTrackVisibility() {
-  const ctl = $("tracks-visible");
-  setLayerVisibility(TRACK_LAYER_IDS, !ctl || ctl.checked);
+  setLayerVisibility(TRACK_LAYER_IDS, tracksVisible);
+  const btn = $("tracks-toggle");
+  if (btn) {
+    btn.textContent = `Tracks: ${tracksVisible ? "On" : "Off"}`;
+    btn.classList.toggle("is-off", !tracksVisible);
+  }
 }
 
 function raiseAreaLayers() {
@@ -309,6 +314,7 @@ async function boot() {
   $("login").hidden = true;
   $("logout").hidden = false;
   $("data-toggle").hidden = false;
+  $("tracks-toggle").hidden = false;
   $("new-run").hidden = false;
   $("layers-toggle").hidden = false;
   $("files-toggle").hidden = false;
@@ -685,7 +691,10 @@ async function uploadAreas(file) {
 
 $("layers-toggle").onclick = () =>
   ($("layers-box").hidden = !$("layers-box").hidden);
-$("tracks-visible").onchange = applyTrackVisibility;
+$("tracks-toggle").onclick = () => {
+  tracksVisible = !tracksVisible;
+  applyTrackVisibility();
+};
 $("up-areas").onchange = (e) => {
   const f = e.target.files[0]; if (f) uploadAreas(f);
   e.target.value = "";

@@ -13,6 +13,7 @@
 <div id="topbar">
   <strong>Garmin Sidescan</strong>
   <button id="data-toggle" hidden>COL List</button>
+  <button id="tracks-toggle" hidden>Tracks: On</button>
   <button id="new-run" hidden>+ New run</button>
   <button id="layers-toggle" hidden>Layers</button>
   <button id="files-toggle" hidden>Files</button>
@@ -53,12 +54,6 @@
 
 <div id="layers-box" hidden>
   <strong>Map layers</strong>
-  <label class="layer-toggle">
-    <input id="tracks-visible" type="checkbox" checked />
-    Show tracks
-  </label>
-  <hr />
-  <strong>Polygon layer</strong>
   <label class="fld">Areas (.geojson)
     <input id="up-areas" type="file" accept=".geojson,.json" />
   </label>
