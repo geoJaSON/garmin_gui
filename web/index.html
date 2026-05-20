@@ -18,6 +18,7 @@
   <button id="combine-go" hidden>Combine (0)</button>
   <button id="layers-toggle" hidden>Layers</button>
   <button id="data-toggle" hidden>Data</button>
+  <button id="files-toggle" hidden>Files</button>
   <label id="clip-label" hidden class="clip">Clip by polygon
     <input id="clip-file" type="file" accept=".geojson,.json" hidden />
   </label>
@@ -64,6 +65,29 @@
     Re-uploading upserts by Our_Name + TPWD_App_No; notes are preserved.
   </p>
 </div>
+
+<section id="files-panel" hidden>
+  <button id="files-close" title="close">×</button>
+  <h2>Files &amp; tracks</h2>
+  <div id="files-meta" class="muted"></div>
+  <div class="files-controls">
+    <input id="files-filter" type="search" placeholder="filter by name…" />
+    <label><input id="files-dupes" type="checkbox" />
+      show duplicates only</label>
+    <button id="files-reload">refresh</button>
+  </div>
+  <table id="files-table">
+    <thead><tr>
+      <th>RSD name</th>
+      <th>RSD file</th>
+      <th>Tracks</th>
+      <th>Mosaic runs</th>
+      <th>Disk</th>
+      <th>Actions</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
 
 <section id="data-panel" hidden>
   <button id="data-close" title="close">×</button>

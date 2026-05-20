@@ -226,6 +226,7 @@ async function boot() {
   $("combine-toggle").hidden = false;
   $("layers-toggle").hidden = false;
   $("data-toggle").hidden = false;
+  $("files-toggle").hidden = false;
   const init = () => { loadTracks(); loadLayers(); };
   if (map.loaded()) init();
   else map.on("load", init);
@@ -681,5 +682,118 @@ $("data-toggle").onclick = () => {
   if (!p.hidden) loadDataTable();
 };
 $("data-close").onclick = () => ($("data-panel").hidden = true);
+
+// --- Files & tracks management page -------------------------------------
+function fmtBytes(n) {
+  if (!n) return "0";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+}
+
+let _filesCache = [];
+
+async function loadFilesTable() {
+  _filesCache = await api("/api/files").then((r) => r.json());
+  renderFilesTable();
+}
+
+function renderFilesTable() {
+  const filter = $("files-filter").value.trim().toLowerCase();
+  const dupesOnly = $("files-dupes").checked;
+  const rows = _filesCache.filter((r) =>
+    (!filter || r.file_name.toLowerCase().includes(filter)) &&
+    (!dupesOnly || r.duplicate));
+  const dups = _filesCache.filter((r) => r.duplicate).length;
+  const totalDisk = _filesCache.reduce((s, r) => s + r.disk_bytes, 0);
+  $("files-meta").textContent =
+    `${_filesCache.length} entr(y/ies)  ·  ${dups} with duplicates  ·  ` +
+    `${fmtBytes(totalDisk)} used`;
+
+  const tbody = document.querySelector("#files-table tbody");
+  tbody.innerHTML = "";
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    if (r.duplicate) tr.classList.add("dup");
+
+    const rsd = r.rsd_file.present
+      ? `<div class="item">${fmtBytes(r.rsd_file.size)}
+           <button class="x" title="Delete the RSD file only"
+                   data-act="rsd-file" data-name="${r.file_name}">file ✕</button></div>`
+      : `<span class="muted-cell">—</span>`;
+
+    const tracks = r.tracks.length
+      ? r.tracks.map((t) =>
+          `<div class="item">
+             <code>#${t.index}</code>
+             ${t.point_count ?? "—"} pts · ${escapeHtml(t.metadata_source || "")}
+             <button class="x" data-act="track-idx"
+                     data-name="${r.file_name}" data-idx="${t.index}">✕</button>
+           </div>`).join("")
+      : `<span class="muted-cell">—</span>`;
+
+    const runs = r.runs.length
+      ? r.runs.map((j) =>
+          `<div class="item">
+             <code>${j.job_id.slice(0, 8)}</code>
+             ${fmtBytes(j.disk_size)}${j.imported ? " · imp" : ""}
+             ${j.has_cog ? "" : ' <span class="muted-cell">no cog</span>'}
+             <button class="x" data-act="run" data-jid="${j.job_id}">✕</button>
+           </div>`).join("")
+      : `<span class="muted-cell">—</span>`;
+
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(r.file_name)}</strong></td>
+      <td>${rsd}</td>
+      <td>${tracks}</td>
+      <td>${runs}</td>
+      <td>${fmtBytes(r.disk_bytes)}</td>
+      <td><button class="nuke" data-act="nuke" data-name="${r.file_name}">
+        delete everything</button></td>`;
+    tbody.appendChild(tr);
+  }
+
+  tbody.querySelectorAll("button[data-act]").forEach((b) => {
+    b.onclick = () => filesAction(b.dataset);
+  });
+}
+
+async function filesAction(d) {
+  const ask = (msg) => confirm(msg);
+  let url, method = "DELETE", desc;
+  if (d.act === "rsd-file") {
+    if (!ask(`Delete the RSD file "${d.name}" only? Inventory + runs stay.`)) return;
+    url = `/api/rsd/${encodeURIComponent(d.name)}/file`;
+    desc = `RSD file ${d.name}`;
+  } else if (d.act === "track-idx") {
+    if (!ask(`Remove inventory entry #${d.idx} for "${d.name}"?`)) return;
+    url = `/api/tracks/${encodeURIComponent(d.name)}/${d.idx}`;
+    desc = `track ${d.name}#${d.idx}`;
+  } else if (d.act === "run") {
+    if (!ask(`Delete mosaic run ${d.jid.slice(0, 8)} (run dir + DB row)?`)) return;
+    url = `/api/runs/${d.jid}`;
+    desc = `run ${d.jid.slice(0, 8)}`;
+  } else if (d.act === "nuke") {
+    if (!ask(`Delete EVERYTHING for "${d.name}"?\n\nRSD file + all inventory entries + all mosaic runs.`)) return;
+    url = `/api/rsd/${encodeURIComponent(d.name)}`;
+    desc = `everything for ${d.name}`;
+  } else return;
+
+  const r = await api(url, { method });
+  if (!r.ok) { alert(`delete failed: ${desc}`); return; }
+  await loadFilesTable();
+  loadTracks();
+  loadLayers();
+}
+
+$("files-toggle").onclick = () => {
+  const p = $("files-panel");
+  p.hidden = !p.hidden;
+  if (!p.hidden) loadFilesTable();
+};
+$("files-close").onclick = () => ($("files-panel").hidden = true);
+$("files-filter").addEventListener("input", renderFilesTable);
+$("files-dupes").addEventListener("change", renderFilesTable);
+$("files-reload").onclick = loadFilesTable;
 
 boot();

@@ -99,6 +99,43 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
   color: #fff; padding: 8px 12px; border-radius: 4px; text-decoration: none;
 }
 #topbar #data-toggle { background: #ea580c; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+#topbar #files-toggle { background: #0891b2; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+
+#files-panel {
+  position: absolute; top: 56px; left: 12px; right: 12px; bottom: 12px;
+  z-index: 7; background: #fff; border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.3); overflow: auto; padding: 16px 20px;
+}
+#files-panel h2 { margin: 0 0 8px; }
+#files-close {
+  float: right; border: 0; background: none; font-size: 22px;
+  cursor: pointer; line-height: 1; color: #888;
+}
+.files-controls {
+  display: flex; gap: 12px; align-items: center; margin: 8px 0 14px;
+  font-size: 12px;
+}
+.files-controls input[type=search] { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 4px; min-width: 240px; }
+.files-controls button { padding: 5px 10px; }
+#files-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#files-table th, #files-table td {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb;
+  vertical-align: top;
+}
+#files-table th { background: #f8fafc; }
+#files-table tr.dup { background: #fffbeb; }
+#files-table .item { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
+#files-table .item code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+#files-table button.x {
+  background: transparent; color: #b91c1c; border: 1px solid #fca5a5;
+  border-radius: 3px; padding: 0 5px; cursor: pointer; font-size: 11px;
+}
+#files-table button.x:hover { background: #fee2e2; }
+#files-table .nuke {
+  background: #dc2626; color: #fff; border: 0; border-radius: 3px;
+  padding: 3px 8px; cursor: pointer; font-size: 11px;
+}
+#files-table .muted-cell { color: #9ca3af; }
 
 #data-panel {
   position: absolute; top: 56px; left: 12px; right: 12px; bottom: 12px;

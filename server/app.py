@@ -611,8 +611,7 @@ async def api_delete_rsd(name: str):
 
 @app.delete("/api/tracks/{file_name}", dependencies=[AuthDep])
 async def api_delete_track(file_name: str):
-    """Remove just the track feature from the inventory; leaves the
-    RSD file and any mosaic runs intact."""
+    """Remove ALL inventory entries for this file_name (no run/RSD touch)."""
     inv = TRACKS_DIR / "rsd_tracks.geojson"
     if not inv.exists():
         raise HTTPException(404, "no inventory on disk")
@@ -627,6 +626,123 @@ async def api_delete_track(file_name: str):
         raise HTTPException(404, "no such track in inventory")
     inv.write_text(json.dumps(fc))
     return {"ok": True, "removed": removed}
+
+
+@app.delete("/api/tracks/{file_name}/{index}", dependencies=[AuthDep])
+async def api_delete_track_at(file_name: str, index: int):
+    """Remove ONE inventory entry by 0-based occurrence index among
+    features with this file_name. Use this to delete a single duplicate."""
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    if not inv.exists():
+        raise HTTPException(404, "no inventory on disk")
+    fc = json.loads(inv.read_text())
+    feats = fc.get("features", [])
+    occurrence = -1
+    target = -1
+    for i, f in enumerate(feats):
+        if (f.get("properties") or {}).get("file_name") == file_name:
+            occurrence += 1
+            if occurrence == index:
+                target = i
+                break
+    if target < 0:
+        raise HTTPException(404, "no such occurrence")
+    feats.pop(target)
+    fc["features"] = feats
+    inv.write_text(json.dumps(fc))
+    return {"ok": True, "removed": 1, "remaining": occurrence}
+
+
+@app.delete("/api/rsd/{name}/file", dependencies=[AuthDep])
+async def api_delete_rsd_file_only(name: str):
+    """Delete just the uploaded RSD file. Inventory and runs are untouched
+    (useful for reclaiming disk while keeping mosaic outputs)."""
+    target = RSD_DIR / Path(name).name
+    if not target.exists():
+        raise HTTPException(404, "no such RSD file")
+    size = target.stat().st_size
+    target.unlink()
+    return {"ok": True, "freed_bytes": size}
+
+
+# ---- unified "Files" view (for the manage page) -------------------------
+def _dir_size_safe(p: Path) -> int:
+    try:
+        return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+    except Exception:
+        return 0
+
+
+@app.get("/api/files", dependencies=[AuthDep])
+async def api_files():
+    """Everything keyed by RSD name: file presence + tracks + mosaic runs.
+
+    One row per unique name. Useful for spotting duplicates and surgically
+    cleaning them up via the granular delete endpoints.
+    """
+    # 1) on-disk RSDs
+    files = {}
+    for p in RSD_DIR.glob("*"):
+        if p.is_file() and p.suffix.lower() == ".rsd":
+            files[p.name] = {"present": True, "size": p.stat().st_size}
+
+    # 2) inventory tracks (keep insertion order so 'index' is meaningful)
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    inv_fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
+    track_groups: dict[str, list] = {}
+    for f in inv_fc.get("features", []):
+        pr = f.get("properties") or {}
+        name = pr.get("file_name")
+        if not name:
+            continue
+        grp = track_groups.setdefault(name, [])
+        grp.append({
+            "index": len(grp),
+            "point_count": pr.get("track_points") or pr.get("point_count"),
+            "metadata_source": (pr.get("metadata_source")
+                                or pr.get("source_meta")),
+        })
+
+    # 3) mosaic runs grouped by RSD
+    run_groups: dict[str, list] = {}
+    for j in db.list_jobs(100000):
+        if j["kind"] != "mosaic":
+            continue
+        res = j.get("result") or {}
+        params = j.get("params") or {}
+        name = (res.get("rsd_name")
+                or (params.get("rsd_path") or "").rsplit("/", 1)[-1])
+        if not name:
+            continue
+        rd = RUNS_DIR / j["id"]
+        run_groups.setdefault(name, []).append({
+            "job_id": j["id"],
+            "status": j["status"],
+            "finished_at": j.get("finished_at"),
+            "imported": bool(res.get("imported")),
+            "has_cog": bool(res.get("cog")
+                            and Path(res["cog"]).exists()),
+            "disk_size": _dir_size_safe(rd),
+        })
+
+    # Union of names across the three sources
+    names = sorted(set(files) | set(track_groups) | set(run_groups))
+    rows = []
+    for n in names:
+        tracks = track_groups.get(n) or []
+        runs = run_groups.get(n) or []
+        rows.append({
+            "file_name": n,
+            "rsd_file": files.get(n) or {"present": False, "size": 0},
+            "tracks": tracks,
+            "track_count": len(tracks),
+            "runs": runs,
+            "run_count": len(runs),
+            "duplicate": len(tracks) > 1 or len(runs) > 1,
+            "disk_bytes": (files.get(n, {}).get("size", 0)
+                           + sum(r["disk_size"] for r in runs)),
+        })
+    return rows
 
 
 @app.get("/api/runs", dependencies=[AuthDep])
