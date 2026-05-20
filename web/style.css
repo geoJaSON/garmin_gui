@@ -277,7 +277,6 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 #data-table th { background: #f8fafc; font-weight: 700; color: #475569; position: sticky; top: 0; z-index: 1; }
 #data-table tbody tr:hover { background: #f9fafb; }
 #data-table input.note { width: 100%; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 3px; font: inherit; }
-#data-table input.buf { width: 56px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font: inherit; }
 #data-table .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
 #data-table .pill.yes { background: #dcfce7; color: #166534; }
 #data-table .pill.no { background: #f3f4f6; color: #6b7280; }
@@ -375,5 +374,4 @@ button.warn:hover { background: #d97706; }
   #data-table .actions a.dl {
     text-align: center; padding: 8px 10px;
   }
-  #data-table input.buf { width: 100%; min-width: 0; }
 }

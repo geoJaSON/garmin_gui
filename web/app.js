@@ -818,16 +818,13 @@ async function selectArea(feature) {
 
   $("panel-body").innerHTML =
     `<dl><dt>TPWD App No</dt><dd>${pr.TPWD_App_No ?? "—"}</dd></dl>` +
-    `<label style="font-size:12px">Buffer (ft)
-       <input id="area-buf" type="number" value="${bufFt}" min="0" step="10"
-              style="width:70px"></label>
+    `<p class="muted">Mosaics use a ${DEFAULT_BUFFER_FT} ft buffer.</p>
      <button id="gen-deliverable" class="badge"
-             style="border:0;cursor:pointer;margin-left:8px">
+             style="border:0;cursor:pointer">
        Generate deliverable</button>
      <div id="dl-slot"></div>`;
   $("gen-deliverable").onclick = () =>
-    generateDeliverable(id,
-      (parseFloat($("area-buf").value) || DEFAULT_BUFFER_FT) * FT_TO_M);
+    generateDeliverable(id, DEFAULT_BUFFER_FT * FT_TO_M);
 }
 
 async function showAreaMosaicPreview(areaId, jobId) {
@@ -1001,7 +998,7 @@ async function loadDataTable() {
     const tr = document.createElement("tr");
     tr.dataset.id = a.id;
     tr.innerHTML = `
-      <td data-label="Name">${escapeHtml(a.our_name)}</td>
+      <td data-label="Survey Name">${escapeHtml(a.our_name)}</td>
       <td data-label="TPWD App No">${escapeHtml(a.tpwd_app_no)}</td>
       <td data-label="Notes"><input class="note" type="text" value="${escapeAttr(a.notes || "")}"></td>
       <td data-label="Mosaic">
@@ -1013,7 +1010,6 @@ async function loadDataTable() {
       </td>
       <td class="actions" data-label="Actions">
         <button class="view">View</button>
-        <input class="buf" type="number" value="${DEFAULT_BUFFER_FT}" min="0" step="10" title="buffer (ft)">
         <button class="gen">Generate</button>
         <a class="dl" ${a.has_mosaic ? `href="/api/deliverable/${a.mosaic_job_id}"`
                                       : 'aria-disabled="true" href="#"'}>
@@ -1035,9 +1031,7 @@ async function loadDataTable() {
     }
     tr.querySelector(".view").onclick = () => viewArea(a);
     tr.querySelector(".gen").onclick = () =>
-      generateDeliverable(a.id,
-        (parseFloat(tr.querySelector(".buf").value) || DEFAULT_BUFFER_FT)
-          * FT_TO_M);
+      generateDeliverable(a.id, DEFAULT_BUFFER_FT * FT_TO_M);
     tr.querySelector(".del").onclick = () => deleteArea(a);
     tbody.appendChild(tr);
   }
