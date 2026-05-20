@@ -178,12 +178,13 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
   cursor: pointer; line-height: 1; color: #888;
 }
 #data-meta { margin-bottom: 14px; color: #64748b; }
+.data-table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid #e5e7eb; }
 #data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 #data-table th, #data-table td {
   text-align: left; padding: 10px 12px; border-bottom: 1px solid #e5e7eb;
   vertical-align: middle;
 }
-#data-table th { background: #f8fafc; font-weight: 700; color: #475569; }
+#data-table th { background: #f8fafc; font-weight: 700; color: #475569; position: sticky; top: 0; z-index: 1; }
 #data-table tbody tr:hover { background: #f9fafb; }
 #data-table input.note { width: 100%; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 3px; font: inherit; }
 #data-table input.buf { width: 56px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font: inherit; }
@@ -218,3 +219,52 @@ button.danger.ghost {
   background: transparent; color: #b91c1c; border: 1px solid #fca5a5;
 }
 button.danger.ghost:hover { background: #fee2e2; }
+
+@media (max-width: 760px) {
+  #topbar {
+    left: 8px; right: 8px; top: 8px;
+    flex-wrap: wrap; max-width: none;
+  }
+  #topbar #status {
+    order: 10; flex-basis: 100%; border-left: 0; padding: 2px 4px 0;
+    max-width: none;
+  }
+  #data-panel {
+    top: 82px; left: 0; right: 0; bottom: 0;
+    border-radius: 18px 18px 0 0; padding: 14px;
+  }
+  #data-panel h2 { font-size: 18px; }
+  .data-table-wrap { overflow: visible; border: 0; }
+  #data-table, #data-table tbody, #data-table tr, #data-table td {
+    display: block; width: 100%;
+  }
+  #data-table thead { display: none; }
+  #data-table tr {
+    margin: 0 0 12px; padding: 12px;
+    border: 1px solid #e5e7eb; border-radius: 14px;
+    box-shadow: 0 6px 18px rgba(15,23,42,.08);
+    background: #fff;
+  }
+  #data-table td {
+    display: grid; grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px; align-items: center;
+    padding: 7px 0; border-bottom: 1px solid #f1f5f9;
+  }
+  #data-table td:last-child { border-bottom: 0; }
+  #data-table td::before {
+    content: attr(data-label);
+    color: #64748b; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  #data-table input.note { min-height: 36px; }
+  #data-table .actions {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  #data-table .actions::before { align-self: center; }
+  #data-table .actions button,
+  #data-table .actions a.dl {
+    text-align: center; padding: 8px 10px;
+  }
+  #data-table input.buf { width: 100%; min-width: 0; }
+}

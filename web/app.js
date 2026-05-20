@@ -480,16 +480,16 @@ async function loadLayers() {
   map.addSource(src, { type: "geojson", data: fc });
   map.addLayer({
     id: src + "-fill", type: "fill", source: src,
-    paint: { "fill-color": "#facc15", "fill-opacity": 0.36 },
+    paint: { "fill-color": "#facc15", "fill-opacity": 0 },
   });
   map.addLayer({
     id: src + "-line", type: "line", source: src,
-    paint: { "line-color": "#92400e", "line-width": 3 },
+    paint: { "line-color": "#fef08a", "line-width": 4 },
   });
   map.addLayer({
     id: src + "-attention-fill", type: "fill", source: src,
     filter: ["==", ["get", "needs_attention"], true],
-    paint: { "fill-color": "#ef4444", "fill-opacity": 0.34 },
+    paint: { "fill-color": "#ef4444", "fill-opacity": 0 },
   });
   map.addLayer({
     id: src + "-attention-line", type: "line", source: src,
@@ -517,19 +517,9 @@ async function loadLayers() {
       "text-anchor": "center",
     },
     paint: {
-      "text-color": [
-        "case",
-        ["==", ["get", "needs_attention"], true],
-        "#991b1b",
-        "#713f12",
-      ],
-      "text-halo-color": [
-        "case",
-        ["==", ["get", "needs_attention"], true],
-        "#fee2e2",
-        "#fffbeb",
-      ],
-      "text-halo-width": 1.6,
+      "text-color": "#000",
+      "text-halo-color": "#fff",
+      "text-halo-width": 1.8,
     },
   });
   map.on("click", src + "-fill", (e) => selectArea(e.features[0]));
@@ -711,10 +701,10 @@ async function loadDataTable() {
     const tr = document.createElement("tr");
     tr.dataset.id = a.id;
     tr.innerHTML = `
-      <td>${escapeHtml(a.our_name)}</td>
-      <td>${escapeHtml(a.tpwd_app_no)}</td>
-      <td><input class="note" type="text" value="${escapeAttr(a.notes || "")}"></td>
-      <td>
+      <td data-label="Name">${escapeHtml(a.our_name)}</td>
+      <td data-label="TPWD App No">${escapeHtml(a.tpwd_app_no)}</td>
+      <td data-label="Notes"><input class="note" type="text" value="${escapeAttr(a.notes || "")}"></td>
+      <td data-label="Mosaic">
         <span class="pill ${a.has_mosaic ? "yes" : "no"}">
           ${a.has_mosaic ? "ready" : "—"}</span>
         ${a.has_mosaic ? `<label class="mosaic-toggle">
@@ -722,7 +712,7 @@ async function loadDataTable() {
                  ${activeAreaMosaics.has(a.id) ? "checked" : ""}>
           Show</label>` : ""}
       </td>
-      <td class="actions">
+      <td class="actions" data-label="Actions">
         <button class="view">View</button>
         <input class="buf" type="number" value="${DEFAULT_BUFFER_FT}" min="0" step="10" title="buffer (ft)">
         <button class="gen">Generate</button>
