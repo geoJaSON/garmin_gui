@@ -414,11 +414,11 @@ async function loadLayers() {
   map.addSource(src, { type: "geojson", data: fc });
   map.addLayer({
     id: src + "-fill", type: "fill", source: src,
-    paint: { "fill-color": "#facc15", "fill-opacity": 0.22 },
+    paint: { "fill-color": "#facc15", "fill-opacity": 0.36 },
   });
   map.addLayer({
     id: src + "-line", type: "line", source: src,
-    paint: { "line-color": "#ca8a04", "line-width": 2.5 },
+    paint: { "line-color": "#92400e", "line-width": 3 },
   });
   map.addLayer({
     id: src + "-attention-fill", type: "fill", source: src,
@@ -440,12 +440,12 @@ async function loadLayers() {
       "text-field": [
         "concat",
         ["case", ["==", ["get", "needs_attention"], true], "REDO: ", ""],
-        ["coalesce", ["get", "Our_Name"], "Area"],
+        ["case", ["has", "Our_Name"], ["to-string", ["get", "Our_Name"]], "Area"],
         " (",
-        ["coalesce", ["get", "TPWD_App_No"], "—"],
+        ["case", ["has", "TPWD_App_No"], ["to-string", ["get", "TPWD_App_No"]], "-"],
         ")",
       ],
-      "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+      "text-font": ["Noto Sans Regular"],
       "text-size": 12,
       "text-offset": [0, 0.2],
       "text-anchor": "center",
