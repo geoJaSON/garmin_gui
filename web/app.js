@@ -374,9 +374,15 @@ async function openDrawer() {
   const sel = $("rsd-select");
   sel.innerHTML = rsds.length
     ? rsds.map((r) => `<option value="${r.path}">${r.name}</option>`).join("")
-    : `<option value="">— none uploaded —</option>`;
+    : `<option value="" disabled>— none uploaded —</option>`;
+  updateRsdCount();
   cfgFields = cfg.fields;
   renderParams();
+}
+
+function updateRsdCount() {
+  const n = $("rsd-select").selectedOptions.length;
+  $("rsd-count").textContent = `${n} selected`;
 }
 
 function renderParams() {
@@ -421,29 +427,99 @@ function collectConfig() {
 async function startRun() {
   const btn = $("run-btn");
   btn.disabled = true;
+  $("run-progress").hidden = false;
+  $("run-bar").style.width = "0%";
+  $("run-queue").textContent = "";
 
-  // Upload first if a file was chosen, else use the dropdown selection.
-  let rsdPath = $("rsd-select").value;
+  // 1) Build the queue: any uploaded file goes first, then every selected
+  //    item from the multi-select.
+  const queue = [];
   const file = $("rsd-file").files[0];
   if (file) {
     const fd = new FormData();
     fd.append("file", file);
-    $("run-desc").textContent = "uploading…";
-    $("run-progress").hidden = false;
+    $("run-desc").textContent = `uploading ${file.name}…`;
     const up = await api("/api/rsd", { method: "POST", body: fd });
-    if (!up.ok) { $("run-desc").textContent = "upload failed"; btn.disabled = false; return; }
-    rsdPath = (await up.json()).path;
+    if (!up.ok) {
+      $("run-desc").textContent = "upload failed"; btn.disabled = false; return;
+    }
+    const u = await up.json();
+    queue.push({ path: u.path, name: u.name });
   }
-  if (!rsdPath) { $("run-desc").textContent = "pick or upload an RSD"; btn.disabled = false; return; }
+  for (const o of $("rsd-select").selectedOptions) {
+    if (!o.value) continue;
+    queue.push({ path: o.value, name: o.textContent });
+  }
+  if (!queue.length) {
+    $("run-desc").textContent = "pick or upload at least one RSD";
+    btn.disabled = false; return;
+  }
 
-  const r = await api("/api/jobs/mosaic", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ rsd_path: rsdPath, config: collectConfig() }),
+  const cfg = collectConfig();
+  const total = queue.length;
+  let done = 0, failed = 0;
+
+  // 2) Sequential: submit, await done, move on. The serial worker would
+  //    process them in order anyway; awaiting lets us mirror per-RSD
+  //    progress in the drawer instead of a queued blob.
+  for (const item of queue) {
+    const remaining = total - done - failed;
+    $("run-queue").textContent =
+      `Batch: ${done + failed + 1} of ${total}  ·  ${remaining - 1} queued after this`;
+    $("run-desc").textContent = `submitting ${item.name}…`;
+    $("run-bar").style.width = "0%";
+
+    const r = await api("/api/jobs/mosaic", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rsd_path: item.path, config: cfg }),
+    });
+    if (!r.ok) {
+      $("run-desc").textContent = `submit failed: ${item.name}`;
+      failed++;
+      continue;
+    }
+    const { job_id } = await r.json();
+    const ok = await awaitStreamJob(job_id, item.name);
+    if (ok) done++; else failed++;
+  }
+
+  $("run-bar").style.width = "100%";
+  $("run-desc").textContent =
+    failed
+      ? `batch done: ${done}/${total} succeeded, ${failed} failed`
+      : `batch done: ${total}/${total} succeeded`;
+  $("run-queue").textContent = "";
+  btn.disabled = false;
+  loadTracks();
+}
+
+// Promise-based streamJob used by the batch loop: mirrors the drawer's
+// progress bar/desc onto the currently-running job and resolves true on
+// done, false on error/cancelled. Console-log onError so the user can
+// still see what went wrong.
+function awaitStreamJob(jobId, label) {
+  return new Promise((resolve) => {
+    const es = new EventSource(`/api/jobs/${jobId}/events`);
+    es.onmessage = (ev) => {
+      const job = JSON.parse(ev.data);
+      if (!job) return;
+      const p = job.progress;
+      if (p && p.pct != null) $("run-bar").style.width = p.pct + "%";
+      $("run-desc").textContent =
+        job.status === "running"
+          ? `${label} — ${p ? `${p.desc} (${p.pct ?? "?"}%)` : "running…"}`
+          : `${label}: ${job.status}`;
+      if (["done", "error", "cancelled"].includes(job.status)) {
+        es.close();
+        if (job.status === "error" && job.error) {
+          console.warn(`[${label}]`, job.error.split("\n")[0]);
+        }
+        resolve(job.status === "done");
+      }
+    };
+    es.onerror = () => { es.close(); resolve(false); };
   });
-  if (!r.ok) { $("run-desc").textContent = "submit failed"; btn.disabled = false; return; }
-  const { job_id } = await r.json();
-  streamJob(job_id);
 }
 
 function streamJob(jobId, onDone) {
@@ -490,6 +566,15 @@ function streamJob(jobId, onDone) {
 $("new-run").onclick = openDrawer;
 $("drawer-close").onclick = () => ($("drawer").hidden = true);
 $("run-btn").onclick = startRun;
+$("rsd-select").addEventListener("change", updateRsdCount);
+$("rsd-all").onclick = () => {
+  for (const o of $("rsd-select").options) o.selected = !o.disabled;
+  updateRsdCount();
+};
+$("rsd-none").onclick = () => {
+  for (const o of $("rsd-select").options) o.selected = false;
+  updateRsdCount();
+};
 
 // --- Phase 5: area polygon layers + per-area deliverable ----------------
 async function loadLayers() {

@@ -75,6 +75,12 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 }
 .fld { display: block; margin: 10px 0; font-size: 13px; color: #444; }
 .fld select, .fld input[type=file] { display: block; width: 100%; margin-top: 4px; }
+.rsd-select-tools {
+  display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 12px;
+}
+.rsd-select-tools button { padding: 2px 8px; font-size: 11px; }
+#rsd-count { color: #64748b; margin-left: auto; }
+#run-queue { margin-top: 6px; font-size: 12px; color: #475569; }
 #params { margin: 14px 0; }
 #params summary { cursor: pointer; font-size: 13px; }
 #params .muted { font-size: 12px; }

@@ -92,6 +92,25 @@ The imported deliverables have no contributing-run list / buffer
 recorded; clicking **Generate** for that area later rebuilds a fully
 detailed report.
 
+## Dropping RSDs in via rsync (bypass the browser uploader)
+
+Faster than uploading one at a time through the UI. `/api/rsd` lists
+whatever is in `/data/rsd/`, so once a file is there the **New run**
+dropdown picks it up — no upload endpoint needed.
+
+```bash
+# locally -> VPS host
+rsync -av --include='*.RSD' --include='*.rsd' --exclude='*' \
+  /path/to/rsds/  root@<VPS>:~/incoming_rsds/
+
+# on VPS, hand off into the data volume
+docker compose cp ~/incoming_rsds/. app:/data/rsd/
+rm -rf ~/incoming_rsds
+```
+
+In the **New run** drawer you can Ctrl/⌘-click (or **select all**) to
+pick multiple — they run sequentially on the worker.
+
 ## Filling survey metadata for imported runs
 
 The bulk import only ships COGs (no `meta/*.csv` are on the server for

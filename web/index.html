@@ -25,8 +25,13 @@
   <button id="drawer-close" title="close">×</button>
   <h2>New mosaic run</h2>
 
-  <label class="fld">RSD file
-    <select id="rsd-select"></select>
+  <label class="fld">RSD file(s) — Ctrl/⌘-click for multiple
+    <select id="rsd-select" multiple size="8"></select>
+    <div class="rsd-select-tools">
+      <button type="button" id="rsd-all">select all</button>
+      <button type="button" id="rsd-none">clear</button>
+      <span id="rsd-count" class="muted">0 selected</span>
+    </div>
   </label>
   <label class="fld">…or upload a new one
     <input id="rsd-file" type="file" accept=".RSD,.rsd" />
@@ -43,6 +48,7 @@
   <div id="run-progress" hidden>
     <div class="bar"><div id="run-bar"></div></div>
     <p id="run-desc" class="muted"></p>
+    <p id="run-queue"></p>
   </div>
 </aside>
 
