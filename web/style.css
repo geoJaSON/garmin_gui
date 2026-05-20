@@ -118,6 +118,14 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
   border: 1px solid #e2e8f0;
 }
 #layers-box strong { display: block; margin-bottom: 8px; }
+#layers-box hr {
+  border: 0; border-top: 1px solid #e2e8f0; margin: 12px 0;
+}
+.layer-toggle {
+  display: flex; align-items: center; gap: 8px;
+  color: #334155; font-size: 13px; cursor: pointer;
+}
+.layer-toggle input { accent-color: #0f172a; }
 #dl-link {
   display: inline-block; margin-top: 12px; background: #16a34a;
   color: #fff; padding: 8px 12px; border-radius: 4px; text-decoration: none;

@@ -318,8 +318,11 @@ async def api_areas_list():
 @app.get("/api/areas.geojson", dependencies=[AuthDep])
 async def api_areas_geojson():
     """FeatureCollection for the map. Each feature carries the row id."""
+    attention_terms = ("redo", "re-do", "rework", "rescan", "re-scan", "revisit")
     feats = []
     for a in db.list_areas():
+        notes = a.get("notes") or ""
+        needs_attention = any(term in notes.lower() for term in attention_terms)
         feats.append({
             "type": "Feature",
             "properties": {
@@ -327,6 +330,8 @@ async def api_areas_geojson():
                 "Our_Name": a["our_name"],
                 "TPWD_App_No": a["tpwd_app_no"],
                 "has_mosaic": bool(a.get("mosaic_job_id")),
+                "notes": notes,
+                "needs_attention": needs_attention,
             },
             "geometry": a["geometry"],
         })

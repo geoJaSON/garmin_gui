@@ -12,6 +12,7 @@ const map = new maplibregl.Map({
   container: "map",
   style: {
     version: 8,
+    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     sources: {
       osm: {
         type: "raster",
@@ -29,6 +30,19 @@ map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 
 // rsd_name -> {cog} for completed mosaics
 let runsByRsd = {};
+const TRACK_LAYER_IDS = ["tracks-case", "tracks-line", "tracks-sel"];
+
+function setLayerVisibility(ids, visible) {
+  const visibility = visible ? "visible" : "none";
+  for (const id of ids) {
+    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+  }
+}
+
+function applyTrackVisibility() {
+  const ctl = $("tracks-visible");
+  setLayerVisibility(TRACK_LAYER_IDS, !ctl || ctl.checked);
+}
 
 function bboxOf(geojson) {
   let minX = 180, minY = 90, maxX = -180, maxY = -90;
@@ -55,18 +69,35 @@ async function loadTracks() {
   else {
     map.addSource("tracks", { type: "geojson", data: tracks });
     map.addLayer({
+      id: "tracks-case", type: "line", source: "tracks",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#0f172a",
+        "line-width": 5,
+        "line-opacity": 0.35,
+      },
+    });
+    map.addLayer({
       id: "tracks-line", type: "line", source: "tracks",
-      paint: { "line-color": "#2563eb", "line-width": 3 },
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#38bdf8",
+        "line-width": 3,
+        "line-opacity": 0.95,
+        "line-dasharray": [0.4, 1.4],
+      },
     });
     map.addLayer({
       id: "tracks-sel", type: "line", source: "tracks",
       filter: ["==", ["get", "file_name"], "__none__"],
-      paint: { "line-color": "#f59e0b", "line-width": 5 },
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#f97316", "line-width": 6, "line-opacity": 0.9 },
     });
     map.on("click", "tracks-line", (e) => selectTrack(e.features[0]));
     map.on("mouseenter", "tracks-line", () => (map.getCanvas().style.cursor = "pointer"));
     map.on("mouseleave", "tracks-line", () => (map.getCanvas().style.cursor = ""));
   }
+  applyTrackVisibility();
 
   const bb = bboxOf(tracks);
   const n = (tracks.features || []).length;
@@ -383,11 +414,57 @@ async function loadLayers() {
   map.addSource(src, { type: "geojson", data: fc });
   map.addLayer({
     id: src + "-fill", type: "fill", source: src,
-    paint: { "fill-color": "#7c3aed", "fill-opacity": 0.07 },
+    paint: { "fill-color": "#facc15", "fill-opacity": 0.22 },
   });
   map.addLayer({
     id: src + "-line", type: "line", source: src,
-    paint: { "line-color": "#7c3aed", "line-width": 2 },
+    paint: { "line-color": "#ca8a04", "line-width": 2.5 },
+  });
+  map.addLayer({
+    id: src + "-attention-fill", type: "fill", source: src,
+    filter: ["==", ["get", "needs_attention"], true],
+    paint: { "fill-color": "#ef4444", "fill-opacity": 0.34 },
+  });
+  map.addLayer({
+    id: src + "-attention-line", type: "line", source: src,
+    filter: ["==", ["get", "needs_attention"], true],
+    paint: {
+      "line-color": "#dc2626",
+      "line-width": 4,
+      "line-dasharray": [1.2, 0.8],
+    },
+  });
+  map.addLayer({
+    id: src + "-label", type: "symbol", source: src,
+    layout: {
+      "text-field": [
+        "concat",
+        ["case", ["==", ["get", "needs_attention"], true], "REDO: ", ""],
+        ["coalesce", ["get", "Our_Name"], "Area"],
+        " (",
+        ["coalesce", ["get", "TPWD_App_No"], "—"],
+        ")",
+      ],
+      "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+      "text-size": 12,
+      "text-offset": [0, 0.2],
+      "text-anchor": "center",
+    },
+    paint: {
+      "text-color": [
+        "case",
+        ["==", ["get", "needs_attention"], true],
+        "#991b1b",
+        "#713f12",
+      ],
+      "text-halo-color": [
+        "case",
+        ["==", ["get", "needs_attention"], true],
+        "#fee2e2",
+        "#fffbeb",
+      ],
+      "text-halo-width": 1.6,
+    },
   });
   map.on("click", src + "-fill", (e) => selectArea(e.features[0]));
   map.on("mouseenter", src + "-fill",
@@ -490,6 +567,7 @@ async function uploadAreas(file) {
 
 $("layers-toggle").onclick = () =>
   ($("layers-box").hidden = !$("layers-box").hidden);
+$("tracks-visible").onchange = applyTrackVisibility;
 $("up-areas").onchange = (e) => {
   const f = e.target.files[0]; if (f) uploadAreas(f);
   e.target.value = "";
@@ -547,11 +625,12 @@ async function deleteArea(a) {
 }
 
 async function saveNote(id, notes) {
-  await api(`/api/areas/${id}`, {
+  const r = await api(`/api/areas/${id}`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ notes }),
   });
+  if (r.ok) loadLayers();
 }
 
 async function viewArea(row) {

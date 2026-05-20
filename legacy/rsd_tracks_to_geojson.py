@@ -17,7 +17,7 @@ import pandas as pd
 from pyproj import Transformer
 
 # --- Edit these before running ---
-INPUT_FOLDER = r"C:\Users\jason\Documents\RSD_FILES"  
+INPUT_FOLDER = r"/media/jason/SSD/RSD_FILES"
 OUTPUT_PATH = None  # None -> <INPUT_FOLDER>/rsd_tracks.geojson, or set a full path string
 SCAN_SUBFOLDERS = True  # False = only files directly in INPUT_FOLDER
 FORCE_REGENERATE_METADATA = False
