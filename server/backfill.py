@@ -59,11 +59,15 @@ def _track_centroid(inv: dict, file_name: str):
     return None
 
 
-def _find_meta_dir(job_id: str, stem: str):
-    for p in (
-        RUNS_DIR / job_id / f"garmin_output_{stem}" / "meta",
-        RSD_DIR / f"garmin_output_{stem}" / "meta",
-    ):
+def _find_meta_dir(job_id: str, stem: str, extra_root: Path = None):
+    candidates = []
+    if extra_root is not None:
+        # External path lets you rsync up just the meta CSVs for runs
+        # that were imported COG-only (no CSVs on the server).
+        candidates.append(extra_root / f"garmin_output_{stem}" / "meta")
+    candidates.append(RUNS_DIR / job_id / f"garmin_output_{stem}" / "meta")
+    candidates.append(RSD_DIR / f"garmin_output_{stem}" / "meta")
+    for p in candidates:
         if p.is_dir():
             return p
     return None
@@ -74,7 +78,16 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--force", action="store_true",
                     help="refetch even if meta/weather already present")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--meta-source-dir", default=None,
+                    help="extra dir to look in for garmin_output_<stem>/meta "
+                         "(use when the meta CSVs were not uploaded to the "
+                         "usual /data/rsd or /data/runs locations)")
     args = ap.parse_args(argv[1:])
+    extra_root = (Path(args.meta_source_dir).expanduser().resolve()
+                  if args.meta_source_dir else None)
+    if extra_root and not extra_root.is_dir():
+        print(f"  ! --meta-source-dir not a directory: {extra_root}")
+        return 2
 
     db.init_db()
     inv = _load_inventory()
@@ -103,7 +116,7 @@ def main(argv: list[str]) -> int:
 
         # --- metadata ---
         if args.force or not res.get("meta"):
-            md = _find_meta_dir(j["id"], stem)
+            md = _find_meta_dir(j["id"], stem, extra_root)
             if md:
                 try:
                     m = summarize_meta_dir(md)

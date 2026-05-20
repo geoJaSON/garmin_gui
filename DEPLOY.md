@@ -92,6 +92,30 @@ The imported deliverables have no contributing-run list / buffer
 recorded; clicking **Generate** for that area later rebuilds a fully
 detailed report.
 
+## Filling survey metadata for imported runs
+
+The bulk import only ships COGs (no `meta/*.csv` are on the server for
+historical RSDs). To populate per-RSD depth/range/ping/unit info in the
+track popup, rsync up just the two summary CSVs and point backfill at them:
+
+```bash
+# locally — tiny meta-only tree
+rsync -av --prune-empty-dirs \
+  --include='*/' \
+  --include='meta/All-Garmin-Sonar-MetaData.csv' \
+  --include='meta/DAT_meta.csv' \
+  --exclude='*' \
+  /path/to/garmin_outputs/  root@<VPS>:~/meta_src/
+
+# on VPS
+docker compose cp ~/meta_src app:/tmp/meta_src
+docker compose exec app python -m server.backfill \
+  --meta-source-dir /tmp/meta_src --dry-run
+docker compose exec app python -m server.backfill \
+  --meta-source-dir /tmp/meta_src
+docker compose exec app rm -rf /tmp/meta_src
+```
+
 ## Backfilling metadata + weather
 
 Older mosaic runs (pre-Phase 7) and historical imports don't have weather
