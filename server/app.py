@@ -340,6 +340,35 @@ async def api_areas_geojson():
     return {"type": "FeatureCollection", "features": feats}
 
 
+@app.get("/api/areas-buffered.geojson", dependencies=[AuthDep])
+async def api_areas_buffered_geojson(buffer_ft: float = 200.0):
+    """Each area buffered by `buffer_ft` (default 200) for a visual hint
+    of the clip boundary the deliverable will use. Buffer is computed in
+    projected meters (same path as the actual deliverable clip)."""
+    from shapely.geometry import mapping
+    from .geo import buffer_wgs84
+
+    buffer_m = float(buffer_ft) * 0.3048
+    feats = []
+    for a in db.list_areas():
+        if not a.get("geometry"):
+            continue
+        try:
+            buffered = buffer_wgs84(a["geometry"], buffer_m)
+        except Exception:
+            continue
+        feats.append({
+            "type": "Feature",
+            "properties": {
+                "id": a["id"],
+                "Our_Name": a["our_name"],
+                "buffer_ft": buffer_ft,
+            },
+            "geometry": mapping(buffered),
+        })
+    return {"type": "FeatureCollection", "features": feats}
+
+
 @app.get("/api/areas/{area_id}", dependencies=[AuthDep])
 async def api_area_get(area_id: str):
     a = db.get_area(area_id)

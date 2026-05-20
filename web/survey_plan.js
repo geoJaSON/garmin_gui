@@ -196,7 +196,30 @@ ${pts}
       });
       map.addLayer({
         id: "plan-poly-line", type: "line", source: "plan-poly",
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: { "line-color": "#ef4444", "line-width": 2, "line-dasharray": [2, 2] },
+      });
+    }
+    if (!map.getSource("plan-verts")) {
+      map.addSource("plan-verts", { type: "geojson", data: emptyFC() });
+      map.addLayer({
+        id: "plan-verts-dot", type: "circle", source: "plan-verts",
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#ef4444",
+          "circle-stroke-color": "#fff",
+          "circle-stroke-width": 1.5,
+        },
+      });
+    }
+    if (!map.getSource("plan-ghost")) {
+      map.addSource("plan-ghost", { type: "geojson", data: emptyFC() });
+      map.addLayer({
+        id: "plan-ghost-line", type: "line", source: "plan-ghost",
+        paint: {
+          "line-color": "#ef4444", "line-width": 1.5,
+          "line-dasharray": [1, 1.5], "line-opacity": 0.6,
+        },
       });
     }
     if (!map.getSource("plan-route")) {
@@ -209,11 +232,52 @@ ${pts}
     }
   }
 
+  function lineFromVerts(verts) {
+    if (verts.length < 2) return emptyFC();
+    return { type: "FeatureCollection", features: [{
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: verts },
+      properties: {},
+    }]};
+  }
+  function pointsFC(verts) {
+    return { type: "FeatureCollection", features: verts.map((c) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: c },
+      properties: {},
+    }))};
+  }
+
   function setPolygonData(map) {
-    const data = drawing
-      ? polyFC(drawVerts)
-      : (polygon.length ? polyFC(polygon) : emptyFC());
+    // While drawing: show vertices + an OPEN line through them (segments
+    // appear from the 2nd click onwards). After finishing: show the
+    // closed Polygon (fill + outline).
+    const verts = drawing ? drawVerts : polygon;
+    let data;
+    if (drawing) {
+      data = lineFromVerts(verts);
+    } else if (verts.length >= 3) {
+      data = polyFC(verts);
+    } else {
+      data = emptyFC();
+    }
     map.getSource("plan-poly").setData(data);
+    map.getSource("plan-verts").setData(pointsFC(verts));
+  }
+
+  function setGhost(map, fromXY, toXY) {
+    if (!fromXY || !toXY) {
+      map.getSource("plan-ghost").setData(emptyFC());
+      return;
+    }
+    map.getSource("plan-ghost").setData({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [fromXY, toXY] },
+        properties: {},
+      }],
+    });
   }
   function setRouteData(map) {
     map.getSource("plan-route").setData(lineFC(route));
@@ -368,6 +432,12 @@ ${pts}
       if (!drawing) return;
       drawVerts.push([e.lngLat.lng, e.lngLat.lat]);
       setPolygonData(map);
+      // The ghost now anchors to the new last vertex on the next mousemove.
+    };
+    const onMove = (e) => {
+      if (!drawing || !drawVerts.length) return;
+      const last = drawVerts[drawVerts.length - 1];
+      setGhost(map, last, [e.lngLat.lng, e.lngLat.lat]);
     };
     const onDbl = (e) => {
       if (!drawing) return;
@@ -377,13 +447,14 @@ ${pts}
     const onKey = (e) => {
       if (e.key === "Escape" && drawing) {
         drawing = false; drawVerts = []; polygon = []; route = [];
-        setPolygonData(map); setRouteData(map);
+        setPolygonData(map); setRouteData(map); setGhost(map);
         map.getCanvas().style.cursor = "";
         document.getElementById("plan-summary").textContent = "—";
         document.getElementById("plan-download").disabled = true;
       }
     };
     map.on("click", onClick);
+    map.on("mousemove", onMove);
     map.on("dblclick", onDbl);
     window.addEventListener("keydown", onKey);
   }
@@ -399,6 +470,7 @@ ${pts}
     drawing = false;
     map.doubleClickZoom.enable();
     map.getCanvas().style.cursor = "";
+    setGhost(map);
     if (drawVerts.length >= 3) {
       polygon = drawVerts.slice();
       setPolygonData(map);
@@ -418,7 +490,7 @@ ${pts}
     document.getElementById("plan-draw").onclick = () => startDraw(map);
     document.getElementById("plan-clear").onclick = () => {
       drawVerts = []; polygon = []; route = [];
-      setPolygonData(map); setRouteData(map);
+      setPolygonData(map); setRouteData(map); setGhost(map);
       document.getElementById("plan-summary").textContent = "—";
       document.getElementById("plan-download").disabled = true;
     };
@@ -446,6 +518,7 @@ ${pts}
     drawVerts = []; polygon = []; route = [];
     if (map.getSource("plan-poly")) setPolygonData(map);
     if (map.getSource("plan-route")) setRouteData(map);
+    if (map.getSource("plan-ghost")) setGhost(map);
   }
 
   window.SurveyPlan = { open, close };

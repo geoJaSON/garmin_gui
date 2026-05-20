@@ -33,6 +33,7 @@ let runsByRsd = {};
 let selectedAreaId = null;
 const TRACK_LAYER_IDS = ["tracks-case", "tracks-line", "tracks-sel"];
 const AREA_LAYER_IDS = [
+  "layer-areas-buffered-line",
   "layer-areas-fill",
   "layer-areas-line",
   "layer-areas-attention-fill",
@@ -675,13 +676,31 @@ $("plan-toggle").onclick = () => {
 
 // --- Phase 5: area polygon layers + per-area deliverable ----------------
 async function loadLayers() {
-  const fc = await api("/api/areas.geojson").then((r) => r.json());
+  const [fc, bufFc] = await Promise.all([
+    api("/api/areas.geojson").then((r) => r.json()),
+    api("/api/areas-buffered.geojson?buffer_ft=200")
+      .then((r) => r.json())
+      .catch(() => ({ type: "FeatureCollection", features: [] })),
+  ]);
   const src = "layer-areas";
+  const bsrc = "layer-areas-buffered";
   if (map.getSource(src)) {
     map.getSource(src).setData(fc);
+    if (map.getSource(bsrc)) map.getSource(bsrc).setData(bufFc);
     raiseAreaLayers();
     return;
   }
+  // Add buffered layer FIRST so the solid area outline draws on top.
+  map.addSource(bsrc, { type: "geojson", data: bufFc });
+  map.addLayer({
+    id: bsrc + "-line", type: "line", source: bsrc,
+    paint: {
+      "line-color": "#6b7280",
+      "line-width": 1.5,
+      "line-dasharray": [3, 3],
+      "line-opacity": 0.55,
+    },
+  });
   map.addSource(src, { type: "geojson", data: fc });
   map.addLayer({
     id: src + "-fill", type: "fill", source: src,
