@@ -191,11 +191,16 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 #data-table .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
 #data-table .pill.yes { background: #dcfce7; color: #166534; }
 #data-table .pill.no { background: #f3f4f6; color: #6b7280; }
-#data-table .mosaic-toggle {
-  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
-  color: #334155; font-size: 12px; white-space: nowrap; cursor: pointer;
+#data-table button.mosaic-visible {
+  margin-left: 8px; padding: 7px 12px; border-radius: 999px;
+  background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+  font-weight: 700; white-space: nowrap;
 }
-#data-table .mosaic-toggle input { accent-color: #0f172a; }
+#data-table button.mosaic-visible:hover { background: #dbeafe; }
+#data-table button.mosaic-visible.is-on {
+  background: #0f172a; color: #fff; border-color: #0f172a;
+}
+#data-table button.mosaic-visible:disabled { opacity: .65; cursor: wait; }
 #data-table .actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 #data-table button, #data-table a.dl {
   font-size: 12px; padding: 4px 8px; border: 0; border-radius: 3px; cursor: pointer; text-decoration: none;
@@ -257,6 +262,10 @@ button.danger.ghost:hover { background: #fee2e2; }
     letter-spacing: .04em;
   }
   #data-table input.note { min-height: 36px; }
+  #data-table button.mosaic-visible {
+    display: block; width: 100%; margin: 8px 0 0; padding: 11px 12px;
+    font-size: 14px;
+  }
   #data-table .actions {
     display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;

@@ -720,10 +720,9 @@ async function loadDataTable() {
       <td data-label="Mosaic">
         <span class="pill ${a.has_mosaic ? "yes" : "no"}">
           ${a.has_mosaic ? "ready" : "—"}</span>
-        ${a.has_mosaic ? `<label class="mosaic-toggle">
-          <input class="mosaic-visible" type="checkbox"
-                 ${activeAreaMosaics.has(a.id) ? "checked" : ""}>
-          Show</label>` : ""}
+        ${a.has_mosaic ? `<button class="mosaic-visible ${activeAreaMosaics.has(a.id) ? "is-on" : ""}"
+          type="button" aria-pressed="${activeAreaMosaics.has(a.id) ? "true" : "false"}">
+          ${activeAreaMosaics.has(a.id) ? "Hide mosaic" : "Show mosaic"}</button>` : ""}
       </td>
       <td class="actions" data-label="Actions">
         <button class="view">View</button>
@@ -741,7 +740,15 @@ async function loadDataTable() {
     note.addEventListener("change", () => saveNote(a.id, note.value));
     const mosaicToggle = tr.querySelector(".mosaic-visible");
     if (mosaicToggle) {
-      mosaicToggle.onchange = () => toggleAreaMosaic(a, mosaicToggle.checked);
+      mosaicToggle.onclick = async () => {
+        mosaicToggle.disabled = true;
+        await toggleAreaMosaic(a, !activeAreaMosaics.has(a.id));
+        const isOn = activeAreaMosaics.has(a.id);
+        mosaicToggle.textContent = isOn ? "Hide mosaic" : "Show mosaic";
+        mosaicToggle.classList.toggle("is-on", isOn);
+        mosaicToggle.setAttribute("aria-pressed", isOn ? "true" : "false");
+        mosaicToggle.disabled = false;
+      };
     }
     tr.querySelector(".view").onclick = () => viewArea(a);
     tr.querySelector(".gen").onclick = () =>
