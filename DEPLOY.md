@@ -71,6 +71,27 @@ docker compose cp ./some_rsd_folder app:/data/rsd/
 Then trigger a `tracks` job over `/data/rsd` from the UI/API; the map will
 populate. Mosaic runs land under `/data/runs/<job>/`.
 
+## Importing already-clipped per-area mosaics
+
+If you already have legacy `<safe_name>/<safe_name>_intensity_clipped.tif`
+deliverables (from `merge_clip_application_area_mosaics.py`):
+
+```bash
+rsync -av ./application_area_mosaics/  root@<VPS>:~/area_mosaics/
+# on VPS
+docker compose cp ~/area_mosaics app:/tmp/area_mosaics
+docker compose exec app python -m server.import_mosaics /tmp/area_mosaics --dry-run
+docker compose exec app python -m server.import_mosaics /tmp/area_mosaics
+docker compose exec app rm -rf /tmp/area_mosaics
+```
+
+For each tif this COG-converts and registers a synthetic `combine` job
+linked to the area whose `sanitize_name(Our_Name)` matches the file
+stem. Idempotent. Areas without a match are skipped with a warning.
+The imported deliverables have no contributing-run list / buffer
+recorded; clicking **Generate** for that area later rebuilds a fully
+detailed report.
+
 ## Backfilling metadata + weather
 
 Older mosaic runs (pre-Phase 7) and historical imports don't have weather
