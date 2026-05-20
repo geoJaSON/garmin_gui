@@ -478,25 +478,39 @@ async def api_job_events(job_id: str):
 # ---- result discovery ---------------------------------------------------
 @app.get("/api/tracks/{file_name}/metadata", dependencies=[AuthDep])
 async def api_track_metadata(file_name: str):
-    """Per-RSD survey metadata (depth/range/ping count/Garmin unit).
+    """Per-RSD survey metadata + weather for the track click panel.
 
-    The pipeline writes meta CSVs beside the RSD; for runs we keep them
-    inside the run dir. Imported historical runs have no CSVs available.
+    Priority:
+      1. The mosaic job's stored result (has meta+weather+survey_datetime
+         after import_runs+backfill, even when no CSVs are on disk).
+      2. The on-disk pingverter meta dir (run dir, then RSD folder) —
+         a fallback for runs that pre-date Phase 7 and haven't been
+         backfilled.
     """
     from .track_metadata import summarize_meta_dir
 
     stem = Path(file_name).stem
-    sources = []
-
-    # Most recent mosaic run (best match — meta produced fresh for it).
     run = db.find_done_mosaic_by_rsd(file_name)
+    if run:
+        res = run.get("result") or {}
+        job_meta = res.get("meta")
+        weather = res.get("weather")
+        survey_dt = res.get("survey_datetime")
+        if job_meta or weather:
+            out = dict(job_meta or {})
+            if weather:
+                out["weather"] = weather
+            if survey_dt:
+                out["survey_datetime"] = survey_dt
+            out["source"] = "job"
+            return out
+
+    sources = []
     if run:
         sources.append(
             (RUNS_DIR / run["id"] / f"garmin_output_{stem}" / "meta", "run")
         )
-    # RSD-folder meta (built by a tracks job or a future re-run).
     sources.append((RSD_DIR / f"garmin_output_{stem}" / "meta", "tracks"))
-
     for meta_dir, kind in sources:
         s = summarize_meta_dir(meta_dir)
         if s:

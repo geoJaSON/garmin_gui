@@ -31,6 +31,14 @@ map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 // rsd_name -> {cog} for completed mosaics
 let runsByRsd = {};
 const TRACK_LAYER_IDS = ["tracks-case", "tracks-line", "tracks-sel"];
+const AREA_LAYER_IDS = [
+  "layer-areas-fill",
+  "layer-areas-line",
+  "layer-areas-attention-fill",
+  "layer-areas-attention-line",
+  "layer-areas-label",
+];
+const activeAreaMosaics = new Set();
 
 function setLayerVisibility(ids, visible) {
   const visibility = visible ? "visible" : "none";
@@ -42,6 +50,16 @@ function setLayerVisibility(ids, visible) {
 function applyTrackVisibility() {
   const ctl = $("tracks-visible");
   setLayerVisibility(TRACK_LAYER_IDS, !ctl || ctl.checked);
+}
+
+function raiseAreaLayers() {
+  for (const id of AREA_LAYER_IDS) {
+    if (map.getLayer(id)) map.moveLayer(id);
+  }
+}
+
+function firstAreaLayerId() {
+  return AREA_LAYER_IDS.find((id) => map.getLayer(id));
 }
 
 function bboxOf(geojson) {
@@ -98,6 +116,7 @@ async function loadTracks() {
     map.on("mouseleave", "tracks-line", () => (map.getCanvas().style.cursor = ""));
   }
   applyTrackVisibility();
+  raiseAreaLayers();
 
   const bb = bboxOf(tracks);
   const n = (tracks.features || []).length;
@@ -191,6 +210,39 @@ async function loadTrackMetadata(fileName) {
     u.software_version ? `sw ${u.software_version}` : null,
     u.channel_count ? `${u.channel_count} ch` : null,
   ].filter(Boolean).join(" · ") || "—";
+
+  // Weather (optional — present after backfill or a fresh-mosaic run).
+  const w = m.weather;
+  const num = (v, d = 1) =>
+    v == null || v === "" ? null : Number(v).toFixed(d);
+  let weatherHtml = "";
+  if (w) {
+    const wsMax = num(w.wind_speed_max_ms, 1);
+    const wsGust = num(w.wind_gusts_max_ms, 1);
+    const windLine =
+      wsMax || wsGust
+        ? `${wsMax ?? "—"} m/s (gust ${wsGust ?? "—"})`
+        : "—";
+    weatherHtml = `
+      <h3 style="margin:14px 0 8px;font-size:13px;color:#374151">
+        Weather${w.date ? ` <span style="color:#9ca3af;font-weight:normal">(${w.date})</span>` : ""}
+      </h3>
+      <dl>
+        <dt>Air temp</dt><dd>${num(w.temperature_2m_mean_c, 1) ?? "—"} °C</dd>
+        <dt>Wind max</dt><dd>${windLine}</dd>
+        <dt>Wave max</dt><dd>${num(w.wave_height_max_m, 2) ?? "—"} m</dd>
+        <dt>Sea surface temp</dt><dd>${num(w.sea_surface_temperature_mean_c, 1) ?? "—"} °C</dd>
+        <dt>Precipitation</dt><dd>${num(w.precipitation_sum_mm, 1) ?? "—"} mm</dd>
+        <dt>Cloud cover</dt><dd>${num(w.cloud_cover_mean_pct, 0) ?? "—"} %</dd>
+      </dl>`;
+  }
+
+  const surveyLine = m.survey_datetime
+    ? `<p class="muted" style="font-size:11px;margin:6px 0 0">
+         survey: ${m.survey_datetime} · source: ${m.source}</p>`
+    : `<p class="muted" style="font-size:11px;margin:6px 0 0">
+         source: ${m.source}</p>`;
+
   slot.innerHTML = `
     <h3 style="margin:0 0 8px;font-size:13px;color:#374151">Survey metadata</h3>
     <dl>
@@ -201,8 +253,8 @@ async function loadTrackMetadata(fileName) {
       <dt>UTM zone</dt><dd>${m.utm_zone ?? "—"}</dd>
       <dt>Garmin unit</dt><dd>${unitLine}</dd>
     </dl>
-    <p class="muted" style="font-size:11px;margin:6px 0 0">
-      source: ${m.source}</p>`;
+    ${weatherHtml}
+    ${surveyLine}`;
 }
 
 async function showCog(cogPath) {
@@ -229,7 +281,11 @@ async function showCog(cogPath) {
     minzoom: tj.minzoom || 0,
     maxzoom: tj.maxzoom || 24,
   });
-  map.addLayer({ id: "cog", type: "raster", source: "cog" }, "tracks-line");
+  map.addLayer(
+    { id: "cog", type: "raster", source: "cog" },
+    firstAreaLayerId() || "tracks-line"
+  );
+  raiseAreaLayers();
   if (tj.bounds) {
     const [w, s, e, n] = tj.bounds;
     map.fitBounds([[w, s], [e, n]], { padding: 40 });
@@ -410,7 +466,11 @@ $("run-btn").onclick = startRun;
 async function loadLayers() {
   const fc = await api("/api/areas.geojson").then((r) => r.json());
   const src = "layer-areas";
-  if (map.getSource(src)) { map.getSource(src).setData(fc); return; }
+  if (map.getSource(src)) {
+    map.getSource(src).setData(fc);
+    raiseAreaLayers();
+    return;
+  }
   map.addSource(src, { type: "geojson", data: fc });
   map.addLayer({
     id: src + "-fill", type: "fill", source: src,
@@ -471,6 +531,7 @@ async function loadLayers() {
     () => (map.getCanvas().style.cursor = "pointer"));
   map.on("mouseleave", src + "-fill",
     () => (map.getCanvas().style.cursor = ""));
+  raiseAreaLayers();
 }
 
 // Backend takes meters; UI works in feet for the survey/permitting workflow.
@@ -545,6 +606,63 @@ async function generateDeliverable(areaId, bufferM) {
   });
 }
 
+async function toggleAreaMosaic(row, show) {
+  const sourceId = `area-mosaic-${row.id}`;
+  const layerId = `${sourceId}-layer`;
+  if (!show) {
+    activeAreaMosaics.delete(row.id);
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+    return;
+  }
+
+  if (!row.mosaic_job_id) return;
+  activeAreaMosaics.add(row.id);
+  if (map.getLayer(layerId)) {
+    map.setLayoutProperty(layerId, "visibility", "visible");
+    raiseAreaLayers();
+    return;
+  }
+
+  $("status").textContent = "area mosaic: loading…";
+  const job = await api(`/api/jobs/${row.mosaic_job_id}`).then((r) => r.json());
+  const cog = job && job.result && job.result.cog;
+  if (!cog) {
+    activeAreaMosaics.delete(row.id);
+    $("status").textContent = "area mosaic unavailable";
+    return;
+  }
+
+  const enc = encodeURIComponent(cog);
+  const tj = await api(
+    `/tiles/WebMercatorQuad/tilejson.json?url=${enc}&_=${Date.now()}`
+  ).then((r) => r.json());
+  if (!activeAreaMosaics.has(row.id)) return;
+  const tileUrl =
+    `${location.origin}/tiles/tiles/WebMercatorQuad/{z}/{x}/{y}` +
+    `?url=${enc}&tilesize=512`;
+
+  map.addSource(sourceId, {
+    type: "raster",
+    tiles: [tileUrl],
+    tileSize: 256,
+    bounds: tj.bounds,
+    minzoom: tj.minzoom || 0,
+    maxzoom: tj.maxzoom || 24,
+  });
+  map.addLayer(
+    {
+      id: layerId,
+      type: "raster",
+      source: sourceId,
+      paint: { "raster-opacity": 0.82 },
+    },
+    firstAreaLayerId()
+  );
+  raiseAreaLayers();
+  $("status").textContent = "area mosaic shown";
+}
+
 async function uploadAreas(file) {
   const fd = new FormData(); fd.append("file", file);
   $("layers-status").textContent = "uploading…";
@@ -587,8 +705,14 @@ async function loadDataTable() {
       <td>${escapeHtml(a.our_name)}</td>
       <td>${escapeHtml(a.tpwd_app_no)}</td>
       <td><input class="note" type="text" value="${escapeAttr(a.notes || "")}"></td>
-      <td><span class="pill ${a.has_mosaic ? "yes" : "no"}">
-        ${a.has_mosaic ? "ready" : "—"}</span></td>
+      <td>
+        <span class="pill ${a.has_mosaic ? "yes" : "no"}">
+          ${a.has_mosaic ? "ready" : "—"}</span>
+        ${a.has_mosaic ? `<label class="mosaic-toggle">
+          <input class="mosaic-visible" type="checkbox"
+                 ${activeAreaMosaics.has(a.id) ? "checked" : ""}>
+          Show</label>` : ""}
+      </td>
       <td class="actions">
         <button class="view">View</button>
         <input class="buf" type="number" value="${DEFAULT_BUFFER_FT}" min="0" step="10" title="buffer (ft)">
@@ -603,6 +727,10 @@ async function loadDataTable() {
       </td>`;
     const note = tr.querySelector(".note");
     note.addEventListener("change", () => saveNote(a.id, note.value));
+    const mosaicToggle = tr.querySelector(".mosaic-visible");
+    if (mosaicToggle) {
+      mosaicToggle.onchange = () => toggleAreaMosaic(a, mosaicToggle.checked);
+    }
     tr.querySelector(".view").onclick = () => viewArea(a);
     tr.querySelector(".gen").onclick = () =>
       generateDeliverable(a.id,
@@ -620,6 +748,7 @@ async function deleteArea(a) {
     `deliverable. Existing deliverable files on disk are left alone.`)) return;
   const r = await api(`/api/areas/${a.id}`, { method: "DELETE" });
   if (!r.ok) { alert("delete failed"); return; }
+  await toggleAreaMosaic(a, false);
   loadDataTable();
   loadLayers();
 }
