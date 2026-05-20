@@ -30,6 +30,20 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 }
 #topbar button:hover { transform: translateY(-1px); }
 
+#help-box {
+  position: absolute; top: 76px; right: 14px; z-index: 4;
+  width: min(320px, calc(100vw - 28px));
+  background: rgba(255,255,255,.96); border: 1px solid #e2e8f0;
+  border-radius: 14px; box-shadow: 0 12px 30px rgba(15,23,42,.18);
+  padding: 10px 12px; backdrop-filter: blur(10px);
+}
+#help-box summary {
+  cursor: pointer; font-weight: 700; color: #0f172a; user-select: none;
+}
+#help-box ul { margin: 10px 0 2px; padding-left: 18px; color: #475569; }
+#help-box li { margin: 6px 0; font-size: 13px; }
+#help-box:not([open]) { width: auto; }
+
 #panel {
   position: absolute; top: 0; right: 0; z-index: 5; height: 100%;
   width: 340px; background: #fff; box-shadow: -2px 0 8px rgba(0,0,0,.25);
@@ -332,6 +346,9 @@ button.warn:hover { background: #d97706; }
   #topbar #status {
     order: 10; flex-basis: 100%; border-left: 0; padding: 2px 4px 0;
     max-width: none;
+  }
+  #help-box {
+    top: 100px; right: 8px; width: min(300px, calc(100vw - 16px));
   }
   #data-panel {
     top: 82px; left: 0; right: 0; bottom: 0;
