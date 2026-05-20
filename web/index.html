@@ -17,6 +17,7 @@
   <button id="new-run" hidden>+ New run</button>
   <button id="all-mosaics-toggle" hidden>Show all mosaics</button>
   <button id="files-toggle" hidden>Files</button>
+  <button id="queue-toggle" hidden>Queue</button>
   <span id="status">…</span>
   <button id="logout" hidden>log out</button>
 </div>
@@ -105,6 +106,19 @@
     </table>
   </div>
 </section>
+
+<aside id="queue-panel" hidden>
+  <button id="queue-close" title="close">×</button>
+  <h2>Queue</h2>
+  <div id="queue-meta" class="muted"></div>
+  <table id="queue-table">
+    <thead><tr>
+      <th>Kind</th><th>Item</th><th>Status</th><th>Progress</th>
+      <th>When</th><th></th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</aside>
 
 <div id="login" hidden>
   <form id="login-form">

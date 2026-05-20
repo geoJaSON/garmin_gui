@@ -341,6 +341,7 @@ async function boot() {
   $("new-run").hidden = false;
   $("all-mosaics-toggle").hidden = false;
   $("files-toggle").hidden = false;
+  $("queue-toggle").hidden = false;
   const init = () => { loadTracks(); loadLayers(); };
   if (map.loaded()) init();
   else map.on("load", init);
@@ -575,6 +576,94 @@ $("rsd-none").onclick = () => {
   for (const o of $("rsd-select").options) o.selected = false;
   updateRsdCount();
 };
+
+// --- Queue panel --------------------------------------------------------
+let _queueTimer = null;
+
+function relTime(t) {
+  if (!t) return "—";
+  const s = Math.max(0, (Date.now() / 1000) - Number(t));
+  if (s < 60) return `${Math.round(s)}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+function jobLabel(j) {
+  const p = j.params || {};
+  const r = j.result || {};
+  if (j.kind === "mosaic") {
+    return r.rsd_name
+      || (p.rsd_path ? p.rsd_path.split("/").pop() : "(mosaic)");
+  }
+  if (j.kind === "tracks") {
+    return `inventory · ${p.input_folder || ""}`;
+  }
+  if (j.kind === "combine") {
+    if (r.area_name) return `area · ${r.area_name}`;
+    if (p.area_id || (p.area && p.area.Our_Name))
+      return `area · ${(p.area && p.area.Our_Name) || p.area_id}`;
+    if (p.polygon) return "polygon clip";
+    if ((p.run_ids || []).length) return `merge ${p.run_ids.length} runs`;
+    return "(combine)";
+  }
+  return j.kind || "(unknown)";
+}
+
+async function loadQueueTable() {
+  const jobs = await api("/api/jobs").then((r) => r.json()).catch(() => []);
+  if (!Array.isArray(jobs)) return;
+  const counts = { queued: 0, running: 0, done: 0, error: 0, cancelled: 0 };
+  for (const j of jobs) if (j.status in counts) counts[j.status]++;
+  $("queue-meta").textContent =
+    `${jobs.length} job(s) · ` +
+    `${counts.running} running · ${counts.queued} queued · ` +
+    `${counts.done} done · ${counts.error} error`;
+
+  const tbody = document.querySelector("#queue-table tbody");
+  tbody.innerHTML = "";
+  for (const j of jobs) {
+    const tr = document.createElement("tr");
+    const p = j.progress || {};
+    const pct = j.status === "done" ? 100 : (p.pct ?? 0);
+    const bar = (j.status === "running" || j.status === "done")
+      ? `<div class="qbar"><div style="width:${pct}%"></div></div>
+         <small>${p.desc || ""}</small>`
+      : "—";
+    const when = relTime(j.finished_at || j.started_at || j.created_at);
+    const canDel = ["done", "error", "cancelled"].includes(j.status);
+    tr.innerHTML = `
+      <td>${j.kind}</td>
+      <td class="item">${escapeHtml(jobLabel(j))}
+        ${j.error ? `<br><small style="color:#b91c1c">${escapeHtml(j.error.split("\\n")[0])}</small>` : ""}</td>
+      <td><span class="pill ${j.status}">${j.status}</span></td>
+      <td>${bar}</td>
+      <td>${when}</td>
+      <td>${canDel ? `<button class="x" data-jid="${j.id}">✕</button>` : ""}</td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll("button.x").forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm("Remove this job from the queue (and any on-disk run dir)?")) return;
+      await api(`/api/runs/${b.dataset.jid}`, { method: "DELETE" });
+      loadQueueTable();
+    };
+  });
+}
+
+function openQueue() {
+  $("queue-panel").hidden = false;
+  loadQueueTable();
+  if (!_queueTimer) _queueTimer = setInterval(loadQueueTable, 1500);
+}
+function closeQueue() {
+  $("queue-panel").hidden = true;
+  if (_queueTimer) { clearInterval(_queueTimer); _queueTimer = null; }
+}
+
+$("queue-toggle").onclick = () =>
+  $("queue-panel").hidden ? openQueue() : closeQueue();
+$("queue-close").onclick = closeQueue;
 
 // --- Phase 5: area polygon layers + per-area deliverable ----------------
 async function loadLayers() {

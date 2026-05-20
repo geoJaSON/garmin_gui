@@ -81,6 +81,48 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 .rsd-select-tools button { padding: 2px 8px; font-size: 11px; }
 #rsd-count { color: #64748b; margin-left: auto; }
 #run-queue { margin-top: 6px; font-size: 12px; color: #475569; }
+
+#topbar #queue-toggle { background: #f1f5f9; color: #334155; }
+#topbar #queue-toggle:hover { background: #e2e8f0; color: #0f172a; }
+
+#queue-panel {
+  position: absolute; top: 68px; right: 14px; z-index: 7;
+  width: min(720px, calc(100vw - 28px)); max-height: calc(100vh - 96px);
+  background: #fff; border-radius: 14px; padding: 16px 18px;
+  box-shadow: 0 18px 45px rgba(15,23,42,.22); overflow: auto;
+  border: 1px solid #e2e8f0;
+}
+#queue-panel h2 { margin: 0 0 6px; font-size: 18px; }
+#queue-close {
+  float: right; border: 0; background: none; font-size: 22px;
+  cursor: pointer; line-height: 1; color: #888;
+}
+#queue-meta { font-size: 12px; color: #64748b; margin-bottom: 10px; }
+#queue-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#queue-table th, #queue-table td {
+  text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb;
+  vertical-align: middle;
+}
+#queue-table th { background: #f8fafc; }
+#queue-table .pill {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.pill.queued    { background: #f1f5f9; color: #475569; }
+.pill.running   { background: #dbeafe; color: #1d4ed8; }
+.pill.done      { background: #dcfce7; color: #166534; }
+.pill.error     { background: #fee2e2; color: #991b1b; }
+.pill.cancelled { background: #fef3c7; color: #92400e; }
+#queue-table .qbar { background: #e5e7eb; border-radius: 3px; height: 6px;
+                     width: 100%; overflow: hidden; }
+#queue-table .qbar > div { background: #2563eb; height: 100%; transition: width .3s; }
+#queue-table button.x {
+  background: transparent; color: #b91c1c; border: 1px solid #fca5a5;
+  border-radius: 3px; padding: 0 6px; cursor: pointer; font-size: 11px;
+}
+#queue-table button.x:hover { background: #fee2e2; }
+#queue-table .item { color: #0f172a; word-break: break-all; }
+#queue-table .item small { color: #94a3b8; }
 #params { margin: 14px 0; }
 #params summary { cursor: pointer; font-size: 13px; }
 #params .muted { font-size: 12px; }

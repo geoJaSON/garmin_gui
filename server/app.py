@@ -578,14 +578,17 @@ async def api_storage():
 
 @app.delete("/api/runs/{job_id}", dependencies=[AuthDep])
 async def api_delete_run(job_id: str):
+    """Delete any job + on-disk artifacts: mosaic run dir AND combine
+    mosaic dir (depending on kind). Used by the Queue panel as a single
+    'cancel/remove this job' affordance for any kind."""
     import shutil
 
     job = db.get_job(job_id)
     if job is None:
         raise HTTPException(404, "no such run")
-    rd = RUNS_DIR / job_id
-    if rd.exists():
-        shutil.rmtree(rd, ignore_errors=True)
+    for d in (RUNS_DIR / job_id, MOSAICS_DIR / job_id):
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
     with db.connect() as c:
         c.execute("DELETE FROM jobs WHERE id=?", (job_id,))
     return {"ok": True}
