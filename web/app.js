@@ -125,9 +125,19 @@ async function loadTracks() {
       id: "tracks-line", type: "line", source: "tracks",
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
-        "line-color": "#38bdf8",
+        "line-color": [
+          "case",
+          ["==", ["get", "mosaic_ignore"], true],
+          "#94a3b8",
+          "#38bdf8",
+        ],
         "line-width": 3,
-        "line-opacity": 0.95,
+        "line-opacity": [
+          "case",
+          ["==", ["get", "mosaic_ignore"], true],
+          0.45,
+          0.95,
+        ],
         "line-dasharray": [0.4, 1.4],
       },
     });
@@ -148,12 +158,14 @@ async function loadTracks() {
   const n = (tracks.features || []).length;
   $("status").textContent = n ? `${n} track(s)` : "no tracks yet — run the inventory";
   if (bb) map.fitBounds(bb, { padding: 60, duration: 0 });
+  return tracks;
 }
 
 // --- track selection -> overlay its mosaic COG ---------------------------
 async function selectTrack(feature) {
   const p = feature.properties || {};
   const name = p.file_name || "(unknown)";
+  const ignored = !!p.mosaic_ignore;
   selectedAreaId = null;
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], name]);
 
@@ -162,6 +174,7 @@ async function selectTrack(feature) {
     ["File", name],
     ["Source meta", p.source_meta || p.source_meta_name || "—"],
     ["Points", p.point_count || p.points || "—"],
+    ["Mosaic generation", ignored ? "ignored" : "included"],
   ];
   let extra;
   if (run) {
@@ -175,14 +188,34 @@ async function selectTrack(feature) {
   $("panel-body").innerHTML =
     "<dl>" + rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") + "</dl>" + extra +
     `<div id="meta-slot" class="muted" style="margin-top:14px">loading survey metadata…</div>
-     <div style="margin-top:16px;display:flex;gap:8px">
+     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+       <button id="ignore-track" class="${ignored ? "warn" : "ghost"}"
+               title="Exclude this track from future area mosaic generation">
+         ${ignored ? "Include in mosaics" : "Ignore for mosaics"}</button>
        <button id="del-track" class="danger ghost" title="Remove just the track feature from the inventory">Delete track</button>
        <button id="del-rsd" class="danger" title="Delete RSD file, track, and every mosaic run for it">Delete RSD + runs</button>
      </div>`;
   $("panel").hidden = false;
   loadTrackMetadata(name);
+  $("ignore-track").onclick = () => setTrackMosaicIgnore(name, !ignored);
   $("del-track").onclick = () => deleteTrackOnly(name);
   $("del-rsd").onclick = () => deleteRsdCascade(name);
+}
+
+async function setTrackMosaicIgnore(name, ignore) {
+  const r = await api(`/api/tracks/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mosaic_ignore: ignore }),
+  });
+  if (!r.ok) { alert("track update failed"); return; }
+  $("status").textContent = ignore
+    ? `${name} ignored for future mosaics`
+    : `${name} included in future mosaics`;
+  const fc = await loadTracks();
+  const feature = (fc.features || []).find((f) =>
+    (f.properties || {}).file_name === name);
+  if (feature) selectTrack(feature);
 }
 
 async function deleteTrackOnly(name) {

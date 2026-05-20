@@ -172,6 +172,8 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
         pc = prep(clip_geom)
         cg, nm, jids = [], [], []
         for feat in fc.get("features", []):
+            if (feat.get("properties") or {}).get("mosaic_ignore"):
+                continue
             g = feat.get("geometry")
             if not g:
                 continue

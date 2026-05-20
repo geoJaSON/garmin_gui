@@ -314,6 +314,16 @@ button.danger.ghost {
   background: transparent; color: #b91c1c; border: 1px solid #fca5a5;
 }
 button.danger.ghost:hover { background: #fee2e2; }
+button.ghost {
+  background: transparent; color: #334155; border: 1px solid #cbd5e1;
+  border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px;
+}
+button.ghost:hover { background: #f1f5f9; }
+button.warn {
+  background: #f59e0b; color: #fff; border: 0; border-radius: 4px;
+  padding: 6px 10px; cursor: pointer; font-size: 12px;
+}
+button.warn:hover { background: #d97706; }
 
 @media (max-width: 760px) {
   #topbar {

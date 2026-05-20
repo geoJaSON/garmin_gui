@@ -256,6 +256,10 @@ def _norm(v):
     return s if s else None
 
 
+def _track_is_ignored(feature: dict) -> bool:
+    return bool((feature.get("properties") or {}).get("mosaic_ignore"))
+
+
 @app.post("/api/areas/upload", dependencies=[AuthDep])
 async def api_areas_upload(file: UploadFile = File(...)):
     """Upsert polygons from a GeoJSON FeatureCollection.
@@ -408,6 +412,8 @@ async def api_area_coverage(area_id: str, buffer_m: float = DEFAULT_BUFFER_M):
     inv_fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
     tracks, with_mosaic = [], []
     for f in inv_fc.get("features", []):
+        if _track_is_ignored(f):
+            continue
         g = f.get("geometry")
         if not g:
             continue
@@ -571,6 +577,29 @@ async def api_tracks_upload(file: UploadFile = File(...)):
         raise HTTPException(400, "expected a GeoJSON FeatureCollection")
     (TRACKS_DIR / "rsd_tracks.geojson").write_bytes(raw)
     return {"ok": True, "features": len(payload.get("features", []))}
+
+
+@app.patch("/api/tracks/{file_name}", dependencies=[AuthDep])
+async def api_track_patch(file_name: str, request: Request):
+    """Update per-track inventory flags without touching runs or RSD files."""
+    body = await request.json()
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    if not inv.exists():
+        raise HTTPException(404, "no inventory on disk")
+    fc = json.loads(inv.read_text())
+    changed = 0
+    for f in fc.get("features", []):
+        props = f.setdefault("properties", {})
+        if props.get("file_name") != file_name:
+            continue
+        if "mosaic_ignore" in body:
+            props["mosaic_ignore"] = bool(body["mosaic_ignore"])
+            changed += 1
+    if not changed:
+        raise HTTPException(404, "no such track in inventory")
+    inv.write_text(json.dumps(fc))
+    return {"ok": True, "updated": changed,
+            "mosaic_ignore": bool(body.get("mosaic_ignore"))}
 
 
 # ---- storage / data management ------------------------------------------
