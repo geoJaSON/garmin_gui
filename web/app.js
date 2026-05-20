@@ -342,6 +342,7 @@ async function boot() {
   $("all-mosaics-toggle").hidden = false;
   $("files-toggle").hidden = false;
   $("queue-toggle").hidden = false;
+  $("plan-toggle").hidden = false;
   const init = () => { loadTracks(); loadLayers(); };
   if (map.loaded()) init();
   else map.on("load", init);
@@ -664,6 +665,13 @@ function closeQueue() {
 $("queue-toggle").onclick = () =>
   $("queue-panel").hidden ? openQueue() : closeQueue();
 $("queue-close").onclick = closeQueue;
+
+// --- Plan survey widget (web/survey_plan.js) ----------------------------
+$("plan-toggle").onclick = () => {
+  const open = !document.getElementById("plan-panel") ||
+               document.getElementById("plan-panel").hidden;
+  open ? window.SurveyPlan.open(map) : window.SurveyPlan.close(map);
+};
 
 // --- Phase 5: area polygon layers + per-area deliverable ----------------
 async function loadLayers() {

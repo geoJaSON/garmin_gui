@@ -84,6 +84,33 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 
 #topbar #queue-toggle { background: #f1f5f9; color: #334155; }
 #topbar #queue-toggle:hover { background: #e2e8f0; color: #0f172a; }
+#topbar #plan-toggle { background: #ef4444; color: #fff; font-weight: 600; }
+#topbar #plan-toggle:hover { background: #dc2626; }
+
+#plan-panel {
+  position: absolute; top: 68px; left: 14px; z-index: 6;
+  width: 320px; background: #fff; border-radius: 12px; padding: 14px 16px;
+  box-shadow: 0 12px 30px rgba(15,23,42,.18); border: 1px solid #e2e8f0;
+}
+#plan-panel h2 { margin: 0 0 6px; font-size: 16px; }
+#plan-close {
+  float: right; border: 0; background: none; font-size: 22px;
+  cursor: pointer; line-height: 1; color: #888;
+}
+#plan-panel button {
+  padding: 6px 12px; border: 0; border-radius: 6px; cursor: pointer;
+  font-size: 12px; background: #f1f5f9; color: #334155;
+}
+#plan-panel button:hover { background: #e2e8f0; }
+#plan-panel #plan-download {
+  width: 100%; margin-top: 6px; background: #16a34a; color: #fff;
+  font-weight: 600; padding: 9px;
+}
+#plan-panel #plan-download:disabled { background: #d1d5db; color: #fff; cursor: default; }
+#plan-panel input[type=number], #plan-panel input[type=text] {
+  width: 100%; padding: 5px 8px; border: 1px solid #d1d5db;
+  border-radius: 4px; margin-top: 3px;
+}
 
 #queue-panel {
   position: absolute; top: 68px; right: 14px; z-index: 7;
