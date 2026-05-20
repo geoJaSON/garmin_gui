@@ -40,6 +40,7 @@ const AREA_LAYER_IDS = [
   "layer-areas-label",
 ];
 const activeAreaMosaics = new Set();
+let readyAreaMosaicIds = new Set();
 let tracksVisible = true;
 
 function setLayerVisibility(ids, visible) {
@@ -56,6 +57,24 @@ function applyTrackVisibility() {
     btn.textContent = `Tracks: ${tracksVisible ? "On" : "Off"}`;
     btn.classList.toggle("is-off", !tracksVisible);
   }
+}
+
+function updateMosaicControls() {
+  document.querySelectorAll("#data-table .mosaic-visible").forEach((btn) => {
+    const id = btn.closest("tr")?.dataset.id;
+    const isOn = activeAreaMosaics.has(id);
+    btn.textContent = isOn ? "Hide mosaic" : "Show mosaic";
+    btn.classList.toggle("is-on", isOn);
+    btn.setAttribute("aria-pressed", isOn ? "true" : "false");
+  });
+
+  const allBtn = $("all-mosaics-toggle");
+  if (!allBtn) return;
+  const readyIds = Array.from(readyAreaMosaicIds);
+  const allShown = readyIds.length > 0 &&
+    readyIds.every((id) => activeAreaMosaics.has(id));
+  allBtn.textContent = allShown ? "Hide all mosaics" : "Show all mosaics";
+  allBtn.classList.toggle("is-on", allShown);
 }
 
 function raiseAreaLayers() {
@@ -320,7 +339,7 @@ async function boot() {
   $("data-toggle").hidden = false;
   $("tracks-toggle").hidden = false;
   $("new-run").hidden = false;
-  $("layers-toggle").hidden = false;
+  $("all-mosaics-toggle").hidden = false;
   $("files-toggle").hidden = false;
   const init = () => { loadTracks(); loadLayers(); };
   if (map.loaded()) init();
@@ -622,6 +641,7 @@ async function toggleAreaMosaic(row, show) {
     activeAreaMosaics.delete(row.id);
     if (map.getLayer(layerId)) map.removeLayer(layerId);
     if (map.getSource(sourceId)) map.removeSource(sourceId);
+    updateMosaicControls();
     return;
   }
 
@@ -630,6 +650,7 @@ async function toggleAreaMosaic(row, show) {
   if (map.getLayer(layerId)) {
     map.setLayoutProperty(layerId, "visibility", "visible");
     raiseAreaLayers();
+    updateMosaicControls();
     return;
   }
 
@@ -639,6 +660,7 @@ async function toggleAreaMosaic(row, show) {
   if (!cog) {
     activeAreaMosaics.delete(row.id);
     $("status").textContent = "area mosaic unavailable";
+    updateMosaicControls();
     return;
   }
 
@@ -670,6 +692,35 @@ async function toggleAreaMosaic(row, show) {
   );
   raiseAreaLayers();
   $("status").textContent = "area mosaic shown";
+  updateMosaicControls();
+}
+
+async function toggleAllAreaMosaics() {
+  const btn = $("all-mosaics-toggle");
+  btn.disabled = true;
+
+  const rows = await api("/api/areas").then((r) => r.json());
+  const readyRows = rows.filter((r) => r.has_mosaic && r.mosaic_job_id);
+  readyAreaMosaicIds = new Set(readyRows.map((r) => r.id));
+  if (!readyRows.length) {
+    $("status").textContent = "no ready mosaics yet";
+    btn.disabled = false;
+    updateMosaicControls();
+    return;
+  }
+
+  const show = !readyRows.every((r) => activeAreaMosaics.has(r.id));
+  btn.textContent = show ? "Loading mosaics..." : "Hiding mosaics...";
+  if (show) {
+    await Promise.all(readyRows.map((r) => toggleAreaMosaic(r, true)));
+    $("status").textContent = `showing ${readyRows.length} mosaic(s)`;
+  } else {
+    await Promise.all(readyRows.map((r) => toggleAreaMosaic(r, false)));
+    $("status").textContent = "all mosaics hidden";
+  }
+
+  btn.disabled = false;
+  updateMosaicControls();
 }
 
 async function uploadAreas(file) {
@@ -692,12 +743,11 @@ async function uploadAreas(file) {
   if (!$("data-panel").hidden) loadDataTable();
 }
 
-$("layers-toggle").onclick = () =>
-  ($("layers-box").hidden = !$("layers-box").hidden);
 $("tracks-toggle").onclick = () => {
   tracksVisible = !tracksVisible;
   applyTrackVisibility();
 };
+$("all-mosaics-toggle").onclick = toggleAllAreaMosaics;
 $("up-areas").onchange = (e) => {
   const f = e.target.files[0]; if (f) uploadAreas(f);
   e.target.value = "";
@@ -706,6 +756,9 @@ $("up-areas").onchange = (e) => {
 // --- Phase 6: data table -------------------------------------------------
 async function loadDataTable() {
   const rows = await api("/api/areas").then((r) => r.json());
+  readyAreaMosaicIds = new Set(
+    rows.filter((r) => r.has_mosaic && r.mosaic_job_id).map((r) => r.id)
+  );
   $("data-meta").textContent =
     `${rows.length} area(s) — ${rows.filter((r) => r.has_mosaic).length} have a mosaic`;
   const tbody = document.querySelector("#data-table tbody");
@@ -743,10 +796,6 @@ async function loadDataTable() {
       mosaicToggle.onclick = async () => {
         mosaicToggle.disabled = true;
         await toggleAreaMosaic(a, !activeAreaMosaics.has(a.id));
-        const isOn = activeAreaMosaics.has(a.id);
-        mosaicToggle.textContent = isOn ? "Hide mosaic" : "Show mosaic";
-        mosaicToggle.classList.toggle("is-on", isOn);
-        mosaicToggle.setAttribute("aria-pressed", isOn ? "true" : "false");
         mosaicToggle.disabled = false;
       };
     }
@@ -758,6 +807,7 @@ async function loadDataTable() {
     tr.querySelector(".del").onclick = () => deleteArea(a);
     tbody.appendChild(tr);
   }
+  updateMosaicControls();
 }
 
 async function deleteArea(a) {
