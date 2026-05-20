@@ -321,6 +321,7 @@ async def api_areas_geojson():
     attention_terms = ("redo", "re-do", "rework", "rescan", "re-scan", "revisit")
     feats = []
     for a in db.list_areas():
+        summary = _area_summary(a)
         notes = a.get("notes") or ""
         needs_attention = any(term in notes.lower() for term in attention_terms)
         feats.append({
@@ -329,7 +330,8 @@ async def api_areas_geojson():
                 "id": a["id"],
                 "Our_Name": a["our_name"],
                 "TPWD_App_No": a["tpwd_app_no"],
-                "has_mosaic": bool(a.get("mosaic_job_id")),
+                "mosaic_job_id": summary["mosaic_job_id"],
+                "has_mosaic": summary["has_mosaic"],
                 "notes": notes,
                 "needs_attention": needs_attention,
             },

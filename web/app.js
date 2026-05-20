@@ -30,6 +30,7 @@ map.addControl(new maplibregl.NavigationControl(), "bottom-right");
 
 // rsd_name -> {cog} for completed mosaics
 let runsByRsd = {};
+let selectedAreaId = null;
 const TRACK_LAYER_IDS = ["tracks-case", "tracks-line", "tracks-sel"];
 const AREA_LAYER_IDS = [
   "layer-areas-fill",
@@ -133,6 +134,7 @@ async function loadTracks() {
 async function selectTrack(feature) {
   const p = feature.properties || {};
   const name = p.file_name || "(unknown)";
+  selectedAreaId = null;
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], name]);
 
   const run = runsByRsd[name];
@@ -262,7 +264,7 @@ async function loadTrackMetadata(fileName) {
     ${surveyLine}`;
 }
 
-async function showCog(cogPath) {
+async function showCog(cogPath, isCurrent = () => true) {
   // Do NOT trust tilejson's `tiles` URLs — TiTiler's url_for has emitted a
   // path (/tiles/{tms}/...) that doesn't match its real route
   // (/tiles/tiles/{tms}/...), 404ing every tile. We build the known-good
@@ -272,6 +274,7 @@ async function showCog(cogPath) {
   const tj = await api(
     `/tiles/WebMercatorQuad/tilejson.json?url=${enc}&_=${Date.now()}`
   ).then((r) => r.json());
+  if (!isCurrent()) return;
 
   const tileUrl =
     `${location.origin}/tiles/tiles/WebMercatorQuad/{z}/{x}/{y}` +
@@ -303,6 +306,7 @@ function removeCog() {
 
 $("panel-close").onclick = () => {
   $("panel").hidden = true;
+  selectedAreaId = null;
   removeCog();
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], "__none__"]);
 };
@@ -537,10 +541,12 @@ const DEFAULT_BUFFER_FT = 200;
 async function selectArea(feature) {
   const pr = feature.properties || {};
   const id = pr.id;
+  selectedAreaId = id;
   $("panel-title").textContent = pr.Our_Name || "Area";
   $("panel-body").innerHTML = "loading coverage…";
   $("panel").hidden = false;
   removeCog();
+  if (pr.mosaic_job_id) showAreaMosaicPreview(id, pr.mosaic_job_id);
 
   const bufFt = DEFAULT_BUFFER_FT;
   let cov;
@@ -569,6 +575,13 @@ async function selectArea(feature) {
   $("gen-deliverable").onclick = () =>
     generateDeliverable(id,
       (parseFloat($("area-buf").value) || DEFAULT_BUFFER_FT) * FT_TO_M);
+}
+
+async function showAreaMosaicPreview(areaId, jobId) {
+  const job = await api(`/api/jobs/${jobId}`).then((r) => r.json());
+  if (selectedAreaId !== areaId) return;
+  const cog = job && job.result && job.result.cog;
+  if (cog) showCog(cog, () => selectedAreaId === areaId);
 }
 
 async function generateDeliverable(areaId, bufferM) {
