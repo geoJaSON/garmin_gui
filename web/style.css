@@ -3,16 +3,32 @@
    (e.g. #login{display:flex}) — otherwise toggling .hidden does nothing
    and overlays like the login screen never disappear. */
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
+html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; color: #111827; }
 #map { position: absolute; inset: 0; }
 
 #topbar {
-  position: absolute; top: 12px; left: 12px; z-index: 5;
-  background: #fff; padding: 8px 12px; border-radius: 6px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.3); display: flex; gap: 10px; align-items: center;
+  position: absolute; top: 14px; left: 14px; z-index: 5;
+  background: rgba(255,255,255,.96); padding: 8px; border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(15,23,42,.18);
+  display: flex; gap: 6px; align-items: center;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(148,163,184,.25);
+  max-width: calc(100vw - 28px);
 }
-#topbar #status { color: #666; }
-#topbar button { font-size: 12px; }
+#topbar strong {
+  padding: 0 8px 0 4px; font-size: 13px; letter-spacing: -.01em;
+  color: #0f172a; white-space: nowrap;
+}
+#topbar #status {
+  color: #64748b; font-size: 12px; padding: 0 8px;
+  border-left: 1px solid #e5e7eb; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 240px;
+}
+#topbar button {
+  font-size: 12px; border: 0; border-radius: 999px; padding: 7px 11px;
+  cursor: pointer; transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+#topbar button:hover { transform: translateY(-1px); }
 
 #panel {
   position: absolute; top: 0; right: 0; z-index: 5; height: 100%;
@@ -78,33 +94,39 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 #run-progress { margin-top: 14px; }
 .bar { background: #e5e7eb; border-radius: 4px; height: 10px; overflow: hidden; }
 #run-bar { background: #2563eb; height: 100%; width: 0; transition: width .3s; }
-#topbar #new-run { background: #2563eb; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
-#topbar #combine-toggle,
-#topbar #combine-go,
-#topbar #clip-label {
-  background: #0d9488; color: #fff; border: 0; border-radius: 4px;
-  padding: 5px 10px; cursor: pointer; font-size: 12px;
+#topbar #data-toggle {
+  background: #0f172a; color: #fff; font-weight: 700;
+  padding: 8px 14px; box-shadow: 0 6px 14px rgba(15,23,42,.18);
 }
-#topbar #combine-go { background: #16a34a; }
-#topbar #clip-label { display: inline-block; }
-#topbar #layers-toggle { background: #7c3aed; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+#topbar #data-toggle:hover { background: #1e293b; }
+#topbar #new-run { background: #2563eb; color: #fff; font-weight: 600; }
+#topbar #new-run:hover { background: #1d4ed8; }
+#topbar #layers-toggle,
+#topbar #files-toggle,
+#topbar #logout {
+  background: #f1f5f9; color: #334155;
+}
+#topbar #layers-toggle:hover,
+#topbar #files-toggle:hover,
+#topbar #logout:hover {
+  background: #e2e8f0; color: #0f172a;
+}
 #layers-box {
-  position: absolute; top: 56px; left: 12px; z-index: 6;
-  background: #fff; padding: 12px 14px; border-radius: 6px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.3); width: 260px;
+  position: absolute; top: 64px; left: 14px; z-index: 6;
+  background: #fff; padding: 14px 16px; border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(15,23,42,.18); width: 280px;
+  border: 1px solid #e2e8f0;
 }
 #layers-box strong { display: block; margin-bottom: 8px; }
 #dl-link {
   display: inline-block; margin-top: 12px; background: #16a34a;
   color: #fff; padding: 8px 12px; border-radius: 4px; text-decoration: none;
 }
-#topbar #data-toggle { background: #ea580c; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
-#topbar #files-toggle { background: #0891b2; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
-
 #files-panel {
-  position: absolute; top: 56px; left: 12px; right: 12px; bottom: 12px;
-  z-index: 7; background: #fff; border-radius: 6px;
-  box-shadow: 0 2px 12px rgba(0,0,0,.3); overflow: auto; padding: 16px 20px;
+  position: absolute; top: 68px; left: 14px; right: 14px; bottom: 14px;
+  z-index: 7; background: #fff; border-radius: 16px;
+  box-shadow: 0 18px 45px rgba(15,23,42,.22); overflow: auto; padding: 18px 22px;
+  border: 1px solid #e2e8f0;
 }
 #files-panel h2 { margin: 0 0 8px; }
 #files-close {
@@ -138,22 +160,23 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; }
 #files-table .muted-cell { color: #9ca3af; }
 
 #data-panel {
-  position: absolute; top: 56px; left: 12px; right: 12px; bottom: 12px;
-  z-index: 7; background: #fff; border-radius: 6px;
-  box-shadow: 0 2px 12px rgba(0,0,0,.3); overflow: auto; padding: 16px 20px;
+  position: absolute; top: 68px; left: 14px; right: 14px; bottom: 14px;
+  z-index: 7; background: #fff; border-radius: 16px;
+  box-shadow: 0 18px 45px rgba(15,23,42,.22); overflow: auto; padding: 18px 22px;
+  border: 1px solid #e2e8f0;
 }
-#data-panel h2 { margin: 0 0 8px; }
+#data-panel h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: -.02em; }
 #data-close {
   float: right; border: 0; background: none; font-size: 22px;
   cursor: pointer; line-height: 1; color: #888;
 }
-#data-meta { margin-bottom: 12px; }
+#data-meta { margin-bottom: 14px; color: #64748b; }
 #data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 #data-table th, #data-table td {
-  text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb;
+  text-align: left; padding: 10px 12px; border-bottom: 1px solid #e5e7eb;
   vertical-align: middle;
 }
-#data-table th { background: #f8fafc; font-weight: 600; }
+#data-table th { background: #f8fafc; font-weight: 700; color: #475569; }
 #data-table tbody tr:hover { background: #f9fafb; }
 #data-table input.note { width: 100%; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 3px; font: inherit; }
 #data-table input.buf { width: 56px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font: inherit; }

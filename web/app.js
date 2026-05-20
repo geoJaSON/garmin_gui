@@ -78,7 +78,6 @@ async function loadTracks() {
 async function selectTrack(feature) {
   const p = feature.properties || {};
   const name = p.file_name || "(unknown)";
-  if (combineMode) { toggleSelect(name); return; }
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], name]);
 
   const run = runsByRsd[name];
@@ -222,10 +221,9 @@ async function boot() {
   if (!me.authed) { $("login").hidden = false; return; }
   $("login").hidden = true;
   $("logout").hidden = false;
-  $("new-run").hidden = false;
-  $("combine-toggle").hidden = false;
-  $("layers-toggle").hidden = false;
   $("data-toggle").hidden = false;
+  $("new-run").hidden = false;
+  $("layers-toggle").hidden = false;
   $("files-toggle").hidden = false;
   const init = () => { loadTracks(); loadLayers(); };
   if (map.loaded()) init();
@@ -372,88 +370,6 @@ function streamJob(jobId, onDone) {
   };
   es.onerror = () => { es.close(); $("run-btn").disabled = false; };
 }
-
-// --- Phase 3c: combine builder (W2 multi-track, W3 polygon) --------------
-let combineMode = false;
-const selected = new Set();
-
-function highlightSelected() {
-  map.setFilter("tracks-sel",
-    ["in", ["get", "file_name"], ["literal", Array.from(selected)]]);
-  $("combine-go").textContent = `Combine (${selected.size})`;
-  $("combine-go").hidden = selected.size === 0;
-}
-
-function setCombineMode(on) {
-  combineMode = on;
-  $("combine-toggle").textContent = `Combine: ${on ? "on" : "off"}`;
-  $("clip-label").hidden = !on;
-  if (!on) {
-    selected.clear();
-    map.setFilter("tracks-sel", ["==", ["get", "file_name"], "__none__"]);
-    $("combine-go").hidden = true;
-  } else {
-    $("panel").hidden = true;
-    removeCog();
-  }
-}
-
-function toggleSelect(name) {
-  if (selected.has(name)) selected.delete(name);
-  else selected.add(name);
-  highlightSelected();
-}
-
-async function runCombine(body, desc) {
-  $("status").textContent = `combine: ${desc}…`;
-  const r = await api("/api/jobs/combine", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) { $("status").textContent = "combine submit failed"; return; }
-  const { job_id } = await r.json();
-  streamJob(job_id, (job) => {
-    const cog = job.result && job.result.cog;
-    if (cog) {
-      showCog(cog);
-      $("status").textContent =
-        `combined ${job.result.rasters} run(s) (${job.result.mode})`;
-    } else {
-      $("status").textContent =
-        "combine produced nothing: " + (job.result?.reason || "no overlap");
-    }
-  });
-}
-
-$("combine-toggle").onclick = () => setCombineMode(!combineMode);
-
-$("combine-go").onclick = () => {
-  const runIds = [];
-  const missing = [];
-  for (const name of selected) {
-    const run = runsByRsd[name];
-    if (run) runIds.push(run.job_id);
-    else missing.push(name);
-  }
-  if (!runIds.length) {
-    $("status").textContent = "selected tracks have no mosaics to combine";
-    return;
-  }
-  if (missing.length)
-    console.warn("skipping tracks with no mosaic:", missing);
-  runCombine({ run_ids: runIds }, `${runIds.length} runs`);
-};
-
-$("clip-file").onchange = async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  let gj;
-  try { gj = JSON.parse(await f.text()); }
-  catch { $("status").textContent = "polygon: not valid JSON"; return; }
-  runCombine({ polygon: gj }, "polygon clip");
-  e.target.value = "";
-};
 
 $("new-run").onclick = openDrawer;
 $("drawer-close").onclick = () => ($("drawer").hidden = true);
