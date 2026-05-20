@@ -235,11 +235,33 @@ ${pts}
         <button id="plan-clear">Clear</button>
       </div>
       <label class="fld">Line spacing (ft)
-        <input id="plan-spacing" type="number" value="50" min="1" step="5" style="width:100%">
+        <input id="plan-spacing" type="number" value="85" min="1" step="5" style="width:100%">
       </label>
-      <label class="fld">Heading (° true) — boat direction along each line
-        <input id="plan-heading" type="number" value="0" min="0" max="359" step="5" style="width:100%">
-      </label>
+      <div class="fld">Heading (° true) — boat direction along each line
+        <div class="compass-row">
+          <svg id="plan-compass" viewBox="-60 -60 120 120" width="120" height="120">
+            <circle r="58" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" />
+            <g id="plan-compass-ticks"></g>
+            <text x="0" y="-42" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">N</text>
+            <text x="44" y="4"  text-anchor="middle" font-size="11" font-weight="700" fill="#475569">E</text>
+            <text x="0"  y="49" text-anchor="middle" font-size="11" font-weight="700" fill="#475569">S</text>
+            <text x="-44" y="4" text-anchor="middle" font-size="11" font-weight="700" fill="#475569">W</text>
+            <g id="plan-needle">
+              <polygon points="0,-50 -5,-38 5,-38" fill="#ef4444" />
+              <line x1="0" y1="0" x2="0" y2="-38" stroke="#ef4444" stroke-width="3" stroke-linecap="round" />
+              <line x1="0" y1="0" x2="0" y2="42" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" />
+            </g>
+            <circle r="3.5" fill="#0f172a" />
+          </svg>
+          <div class="compass-side">
+            <input id="plan-heading" type="number" value="0" min="0" max="359" step="1">
+            <div id="plan-heading-card" class="muted">N · 0°</div>
+            <p class="muted" style="font-size:11px;line-height:1.3;margin-top:6px">
+              Click or drag on the dial, or type degrees.
+            </p>
+          </div>
+        </div>
+      </div>
       <label class="fld">Plan name (for the GPX file)
         <input id="plan-name" type="text" value="survey" style="width:100%">
       </label>
@@ -247,6 +269,75 @@ ${pts}
       <button id="plan-download" disabled>Download GPX</button>
     `;
     document.body.appendChild(el);
+  }
+
+  // 16-point cardinal name from compass degrees.
+  function cardinal(deg) {
+    const d = ["N","NNE","NE","ENE","E","ESE","SE","SSE",
+               "S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    return d[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
+  }
+
+  function setHeading(rawDeg, map, fromInput) {
+    let d = Math.round((((rawDeg % 360) + 360) % 360));
+    if (d === 360) d = 0;
+    const inp = document.getElementById("plan-heading");
+    if (inp && !fromInput) inp.value = d;
+    const needle = document.getElementById("plan-needle");
+    if (needle) needle.setAttribute("transform", `rotate(${d})`);
+    const lbl = document.getElementById("plan-heading-card");
+    if (lbl) lbl.textContent = `${cardinal(d)} · ${d}°`;
+    regenerate(map);
+  }
+
+  function renderCompassTicks() {
+    const g = document.getElementById("plan-compass-ticks");
+    if (!g || g.childNodes.length) return;
+    const out = [];
+    for (let i = 0; i < 36; i++) {
+      const a = (i * 10) * Math.PI / 180;
+      const major = i % 9 === 0;        // N/E/S/W
+      const mid   = !major && i % 3 === 0;  // every 30°
+      const r2 = major ? 40 : mid ? 44 : 47;
+      const x1 = Math.sin(a) * 50, y1 = -Math.cos(a) * 50;
+      const x2 = Math.sin(a) * r2,  y2 = -Math.cos(a) * r2;
+      const w  = major ? 1.6 : mid ? 1.2 : 0.8;
+      const c  = major ? "#0f172a" : "#94a3b8";
+      out.push(`<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}"
+                       x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"
+                       stroke="${c}" stroke-width="${w}" />`);
+    }
+    g.innerHTML = out.join("");
+  }
+
+  let _compassBound = false;
+  function setupCompass(map) {
+    renderCompassTicks();
+    const svg = document.getElementById("plan-compass");
+    const inp = document.getElementById("plan-heading");
+    if (!_compassBound) {
+      let dragging = false;
+      const bearingFromEvent = (ev) => {
+        const r = svg.getBoundingClientRect();
+        const dx = ev.clientX - (r.left + r.width / 2);
+        const dy = ev.clientY - (r.top + r.height / 2);
+        return (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+      };
+      svg.addEventListener("mousedown", (e) => {
+        dragging = true; setHeading(bearingFromEvent(e), map);
+        e.preventDefault();
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (dragging) setHeading(bearingFromEvent(e), map);
+      });
+      window.addEventListener("mouseup", () => { dragging = false; });
+      inp.addEventListener("input", () => {
+        const v = parseFloat(inp.value);
+        if (isFinite(v)) setHeading(v, map, true);
+      });
+      _compassBound = true;
+    }
+    setHeading(parseFloat(inp.value) || 0, map);
   }
 
   function regenerate(map) {
@@ -332,7 +423,7 @@ ${pts}
       document.getElementById("plan-download").disabled = true;
     };
     document.getElementById("plan-spacing").oninput = () => regenerate(map);
-    document.getElementById("plan-heading").oninput = () => regenerate(map);
+    setupCompass(map);
     document.getElementById("plan-download").onclick = () => {
       const name = document.getElementById("plan-name").value || "survey";
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
