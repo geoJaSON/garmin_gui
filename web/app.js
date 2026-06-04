@@ -400,13 +400,16 @@ $("logout").onclick = async () => {
 
 // --- Phase 3b: new-run drawer -------------------------------------------
 let cfgFields = [];
+let availableRsds = [];
 
 async function openDrawer() {
   $("drawer").hidden = false;
+  $("rsd-file-status").textContent = "";
   const [rsds, cfg] = await Promise.all([
     api("/api/rsd").then((r) => r.json()),
     api("/api/config/mosaic").then((r) => r.json()),
   ]);
+  availableRsds = rsds;
   const sel = $("rsd-select");
   sel.innerHTML = rsds.length
     ? rsds.map((r) => `<option value="${r.path}">${r.name}</option>`).join("")
@@ -611,6 +614,29 @@ $("rsd-none").onclick = () => {
   for (const o of $("rsd-select").options) o.selected = false;
   updateRsdCount();
 };
+$("rsd-file").addEventListener("change", () => {
+  const f = $("rsd-file").files[0];
+  const el = $("rsd-file-status");
+  if (!f) { el.textContent = ""; el.style.color = ""; return; }
+  const name = f.name;
+  const existing = availableRsds.find((r) => r.name === name);
+  const run = runsByRsd[name];
+  const sizeStr = fmtBytes(f.size);
+  if (run) {
+    el.style.color = "#b45309";
+    el.innerHTML =
+      `⚠ Already processed — mosaic exists ` +
+      `(<code>${run.job_id.slice(0, 8)}</code>). Uploading will overwrite the RSD.`;
+  } else if (existing) {
+    el.style.color = "#b45309";
+    el.innerHTML =
+      `⚠ Already uploaded (${fmtBytes(existing.size)} on server) — ` +
+      `uploading will overwrite. No mosaic yet.`;
+  } else {
+    el.style.color = "#16a34a";
+    el.textContent = `✓ New file (${sizeStr}) — will upload.`;
+  }
+});
 
 // --- Queue panel --------------------------------------------------------
 let _queueTimer = null;
