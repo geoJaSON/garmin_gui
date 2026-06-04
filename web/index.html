@@ -133,6 +133,21 @@
   </table>
 </aside>
 
+<div id="date-filter" hidden>
+  <div class="date-filter-row">
+    <span id="date-from-label">—</span>
+    <div class="date-filter-slider" id="date-slider-wrap">
+      <div class="date-filter-track-bg"></div>
+      <div class="date-filter-track-fill" id="date-track-fill"></div>
+      <input id="date-from" type="range" min="0" max="100" value="0">
+      <input id="date-to"   type="range" min="0" max="100" value="100">
+    </div>
+    <span id="date-to-label">—</span>
+    <button id="date-filter-reset" title="Show all dates">All</button>
+  </div>
+  <div id="date-filter-status" class="muted"></div>
+</div>
+
 <div id="login" hidden>
   <form id="login-form">
     <h2>Garmin Sidescan</h2>

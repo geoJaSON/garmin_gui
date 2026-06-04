@@ -125,6 +125,49 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
   width: 100%; padding: 5px 8px; border: 1px solid #d1d5db;
   border-radius: 4px; margin-top: 3px;
 }
+#date-filter {
+  position: absolute; bottom: 14px; left: 14px; right: 14px; z-index: 5;
+  background: rgba(255,255,255,.96); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15,23,42,.18);
+  padding: 10px 14px; border: 1px solid #e2e8f0;
+  backdrop-filter: blur(10px); max-width: 720px; margin: 0 auto;
+}
+.date-filter-row { display: flex; gap: 12px; align-items: center; }
+.date-filter-row > span {
+  font-size: 12px; font-weight: 600; color: #0f172a;
+  min-width: 86px; text-align: center;
+}
+.date-filter-slider { position: relative; flex: 1; height: 26px; }
+.date-filter-track-bg, .date-filter-track-fill {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  height: 4px; border-radius: 2px;
+}
+.date-filter-track-bg { left: 0; right: 0; background: #e2e8f0; }
+.date-filter-track-fill { background: #2563eb; }
+.date-filter-slider input[type=range] {
+  position: absolute; top: 0; left: 0; right: 0; width: 100%; margin: 0;
+  -webkit-appearance: none; appearance: none;
+  background: transparent; pointer-events: none; height: 26px;
+}
+.date-filter-slider input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #2563eb; border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  cursor: grab; pointer-events: auto;
+}
+.date-filter-slider input[type=range]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #2563eb; border: 2px solid #fff;
+  cursor: grab; pointer-events: auto;
+}
+#date-filter button {
+  padding: 4px 12px; background: #f1f5f9; color: #334155;
+  border: 0; border-radius: 999px; cursor: pointer; font-size: 12px;
+}
+#date-filter button:hover { background: #e2e8f0; }
+#date-filter-status { font-size: 11px; color: #64748b; margin-top: 4px; min-height: 1em; }
+
 #plan-panel .compass-row {
   display: flex; gap: 12px; align-items: center; margin-top: 6px;
 }

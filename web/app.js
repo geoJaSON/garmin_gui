@@ -109,6 +109,8 @@ async function loadTracks() {
   runsByRsd = {};
   for (const run of runs) if (run.rsd_name) runsByRsd[run.rsd_name] = run;
 
+  decorateTracksWithDates(tracks);
+
   if (map.getSource("tracks")) map.getSource("tracks").setData(tracks);
   else {
     map.addSource("tracks", { type: "geojson", data: tracks });
@@ -158,8 +160,126 @@ async function loadTracks() {
   const n = (tracks.features || []).length;
   $("status").textContent = n ? `${n} track(s)` : "no tracks yet — run the inventory";
   if (bb) map.fitBounds(bb, { padding: 60, duration: 0 });
+  initDateSlider();
+  applyDateFilter();
   return tracks;
 }
+
+// --- Date filter (parse from RSD filenames DDMMMYY-...) -----------------
+const RSD_MONTHS = {
+  JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+  JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+};
+function parseRsdDateEpoch(name) {
+  const m = String(name || "").match(/^(\d{1,2})([A-Z]{3})(\d{2,4})/i);
+  if (!m) return null;
+  const mo = RSD_MONTHS[m[2].toUpperCase()];
+  if (mo == null) return null;
+  let yr = +m[3]; if (yr < 100) yr += 2000;
+  const day = +m[1];
+  return Date.UTC(yr, mo, day) / 86400000;   // epoch days
+}
+function fmtEpochDay(eDays) {
+  return new Date(eDays * 86400000).toLocaleDateString(undefined, {
+    day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC",
+  });
+}
+
+let _trackDateMin = null, _trackDateMax = null;
+let _trackTotal = 0, _trackDated = 0;
+
+function decorateTracksWithDates(tracks) {
+  _trackTotal = (tracks.features || []).length;
+  _trackDated = 0;
+  let mn = Infinity, mx = -Infinity;
+  for (const f of tracks.features || []) {
+    const props = f.properties = f.properties || {};
+    const e = parseRsdDateEpoch(props.file_name);
+    if (e != null) {
+      props.date_epoch = e;
+      _trackDated++;
+      if (e < mn) mn = e;
+      if (e > mx) mx = e;
+    } else {
+      delete props.date_epoch;
+    }
+  }
+  _trackDateMin = isFinite(mn) ? mn : null;
+  _trackDateMax = isFinite(mx) ? mx : null;
+}
+
+function initDateSlider() {
+  const wrap = $("date-filter");
+  if (_trackDateMin == null || _trackDateMax == null ||
+      _trackDateMin === _trackDateMax) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  const span = _trackDateMax - _trackDateMin;
+  const from = $("date-from"), to = $("date-to");
+  from.min = to.min = 0;
+  from.max = to.max = span;
+  from.step = to.step = 1;
+  from.value = 0; to.value = span;
+  updateDateLabels();
+  updateDateTrackFill();
+}
+
+function updateDateLabels() {
+  if (_trackDateMin == null) return;
+  const f = +$("date-from").value, t = +$("date-to").value;
+  $("date-from-label").textContent = fmtEpochDay(_trackDateMin + f);
+  $("date-to-label").textContent = fmtEpochDay(_trackDateMin + t);
+  const span = _trackDateMax - _trackDateMin;
+  const fullRange = (f === 0 && t === span);
+  $("date-filter-status").textContent = fullRange
+    ? `All ${_trackTotal} track(s)` +
+      (_trackDated < _trackTotal ? ` · ${_trackTotal - _trackDated} undated` : "")
+    : `Filtering by date — undated tracks hidden ` +
+      `(${_trackTotal - _trackDated} of ${_trackTotal})`;
+}
+function updateDateTrackFill() {
+  if (_trackDateMin == null) return;
+  const span = _trackDateMax - _trackDateMin;
+  if (span <= 0) return;
+  const f = +$("date-from").value, t = +$("date-to").value;
+  $("date-track-fill").style.left  = (f / span * 100) + "%";
+  $("date-track-fill").style.right = (100 - t / span * 100) + "%";
+}
+
+function applyDateFilter() {
+  if (_trackDateMin == null) return;
+  const f = +$("date-from").value, t = +$("date-to").value;
+  const span = _trackDateMax - _trackDateMin;
+  const fullRange = (f === 0 && t === span);
+  const filter = fullRange ? null : [
+    "all",
+    ["has", "date_epoch"],
+    [">=", ["get", "date_epoch"], _trackDateMin + f],
+    ["<=", ["get", "date_epoch"], _trackDateMin + t],
+  ];
+  for (const id of ["tracks-case", "tracks-line"]) {
+    if (map.getLayer(id)) map.setFilter(id, filter);
+  }
+}
+
+$("date-from").addEventListener("input", () => {
+  if (+$("date-from").value > +$("date-to").value)
+    $("date-from").value = $("date-to").value;
+  updateDateLabels(); updateDateTrackFill(); applyDateFilter();
+});
+$("date-to").addEventListener("input", () => {
+  if (+$("date-to").value < +$("date-from").value)
+    $("date-to").value = $("date-from").value;
+  updateDateLabels(); updateDateTrackFill(); applyDateFilter();
+});
+$("date-filter-reset").onclick = () => {
+  if (_trackDateMin == null) return;
+  const span = _trackDateMax - _trackDateMin;
+  $("date-from").value = 0; $("date-to").value = span;
+  updateDateLabels(); updateDateTrackFill(); applyDateFilter();
+};
 
 // --- track selection -> overlay its mosaic COG ---------------------------
 async function selectTrack(feature) {
