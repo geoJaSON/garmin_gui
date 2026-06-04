@@ -208,6 +208,10 @@ function decorateTracksWithDates(tracks) {
   _trackDateMax = isFinite(mx) ? mx : null;
 }
 
+// Default: hide tracks older than this date on first load. Falls back to
+// full range automatically if every track is older than the cutoff.
+const DEFAULT_MIN_DATE_EPOCH = Date.UTC(2026, 0, 1) / 86400000;
+
 function initDateSlider() {
   const wrap = $("date-filter");
   if (_trackDateMin == null || _trackDateMax == null ||
@@ -221,7 +225,14 @@ function initDateSlider() {
   from.min = to.min = 0;
   from.max = to.max = span;
   from.step = to.step = 1;
-  from.value = 0; to.value = span;
+  // Start at DEFAULT_MIN_DATE_EPOCH if it falls inside the data range;
+  // otherwise leave the slider at full range so something is visible.
+  const defaultFrom =
+    DEFAULT_MIN_DATE_EPOCH > _trackDateMin &&
+    DEFAULT_MIN_DATE_EPOCH < _trackDateMax
+      ? DEFAULT_MIN_DATE_EPOCH - _trackDateMin
+      : 0;
+  from.value = defaultFrom; to.value = span;
   updateDateLabels();
   updateDateTrackFill();
 }
