@@ -133,6 +133,22 @@
     return { route, totalM: Math.round(totalM), lineCount: rows.length };
   }
 
+  // Total length (meters) of an open path [[lon,lat],...], projected around
+  // its own average position. Used for the raw line-draw summary.
+  function lineLengthM(coordsLL) {
+    if (coordsLL.length < 2) return 0;
+    let lon = 0, lat = 0;
+    for (const [x, y] of coordsLL) { lon += x; lat += y; }
+    lon /= coordsLL.length; lat /= coordsLL.length;
+    const proj = projector(lon, lat);
+    const pts = coordsLL.map(([lo, la]) => proj.to(lo, la));
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+      total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    }
+    return total;
+  }
+
   // --- GPX output (matches your old <trk><trkseg> format) ----------------
   function toGPX(route, name) {
     const safe = (s) =>
@@ -165,11 +181,13 @@ ${pts}
   }
 
   // --- map state -----------------------------------------------------------
-  // The polygon being drawn (open) and the finalized one.
+  // The shape being drawn (open) and the finalized one.
   let drawing = false;
+  let mode = "polygon";        // "polygon" (serpentine fill) | "line" (raw path)
   let drawVerts = [];          // [[lon,lat],...]
-  let polygon = [];            // finalized closed ring
-  let route = [];
+  let polygon = [];            // finalized closed ring (polygon mode)
+  let line = [];               // finalized open path (line mode)
+  let route = [];              // serpentine route (polygon) OR the path itself (line)
 
   function emptyFC() { return { type: "FeatureCollection", features: [] }; }
   function lineFC(coords) {
@@ -250,13 +268,15 @@ ${pts}
 
   function setPolygonData(map) {
     // While drawing: show vertices + an OPEN line through them (segments
-    // appear from the 2nd click onwards). After finishing: show the
-    // closed Polygon (fill + outline).
-    const verts = drawing ? drawVerts : polygon;
+    // appear from the 2nd click onwards). After finishing in polygon mode:
+    // show the closed Polygon (fill + outline). In line mode the finished
+    // path is rendered as the orange route instead (see setRouteData), so
+    // here we only keep its vertices visible.
+    const verts = drawing ? drawVerts : (mode === "line" ? line : polygon);
     let data;
     if (drawing) {
       data = lineFromVerts(verts);
-    } else if (verts.length >= 3) {
+    } else if (mode === "polygon" && verts.length >= 3) {
       data = polyFC(verts);
     } else {
       data = emptyFC();
@@ -292,12 +312,16 @@ ${pts}
       <button id="plan-close" title="close">×</button>
       <h2>Plan survey</h2>
       <p class="muted" style="font-size:12px;margin:0 0 10px">
-        Click on the map to add vertices · double-click to finish · Esc to cancel.
+        Click on the map to add points · double-click to finish · Esc to cancel.
+        <br><strong>Polygon</strong> fills the area with survey lines;
+        <strong>Line</strong> exports the path you draw as-is.
       </p>
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <button id="plan-draw">Draw polygon</button>
+        <button id="plan-draw-line">Draw line</button>
         <button id="plan-clear">Clear</button>
       </div>
+      <div id="plan-poly-opts">
       <label class="fld">Line spacing (ft)
         <input id="plan-spacing" type="number" value="85" min="1" step="5" style="width:100%">
       </label>
@@ -326,6 +350,7 @@ ${pts}
           </div>
         </div>
       </div>
+      </div><!-- /plan-poly-opts -->
       <label class="fld">Plan name (for the GPX file)
         <input id="plan-name" type="text" value="survey" style="width:100%">
       </label>
@@ -404,7 +429,41 @@ ${pts}
     setHeading(parseFloat(inp.value) || 0, map);
   }
 
+  // Show/hide the polygon-only controls (spacing + heading) and relabel the
+  // active draw button so the current mode is obvious.
+  function applyModeUI() {
+    const opts = document.getElementById("plan-poly-opts");
+    if (opts) opts.style.display = mode === "line" ? "none" : "";
+    const pBtn = document.getElementById("plan-draw");
+    const lBtn = document.getElementById("plan-draw-line");
+    if (pBtn) pBtn.classList.toggle("active", mode === "polygon" && (drawing || polygon.length));
+    if (lBtn) lBtn.classList.toggle("active", mode === "line" && (drawing || line.length));
+  }
+
+  // Line mode: the drawn path IS the deliverable. Mirror it into the route
+  // source (orange) and summarize its length.
+  function updateLineSummary(map) {
+    route = line.slice();
+    setRouteData(map);
+    const summary = document.getElementById("plan-summary");
+    const dl = document.getElementById("plan-download");
+    if (line.length < 2) {
+      route = []; setRouteData(map);
+      summary.textContent = "—";
+      dl.disabled = true;
+      return;
+    }
+    const total = lineLengthM(line);
+    const distFt = Math.round(total / FT_TO_M);
+    const minutes = Math.round(total / 5 / 60);  // assume ~5 m/s = ~10 kts
+    summary.textContent =
+      `${line.length} pts · ${distFt.toLocaleString()} ft ` +
+      `(${Math.round(total).toLocaleString()} m) · ~${minutes} min at 5 m/s`;
+    dl.disabled = false;
+  }
+
   function regenerate(map) {
+    if (mode === "line") { updateLineSummary(map); return; }
     const spacingFt = parseFloat(document.getElementById("plan-spacing").value);
     const heading = parseFloat(document.getElementById("plan-heading").value);
     if (polygon.length < 3 || !(spacingFt > 0)) {
@@ -446,9 +505,10 @@ ${pts}
     };
     const onKey = (e) => {
       if (e.key === "Escape" && drawing) {
-        drawing = false; drawVerts = []; polygon = []; route = [];
+        drawing = false; drawVerts = []; polygon = []; line = []; route = [];
         setPolygonData(map); setRouteData(map); setGhost(map);
         map.getCanvas().style.cursor = "";
+        applyModeUI();
         document.getElementById("plan-summary").textContent = "—";
         document.getElementById("plan-download").disabled = true;
       }
@@ -459,8 +519,10 @@ ${pts}
     window.addEventListener("keydown", onKey);
   }
 
-  function startDraw(map) {
-    drawing = true; drawVerts = []; polygon = []; route = [];
+  function startDraw(map, drawMode) {
+    mode = drawMode || "polygon";
+    drawing = true; drawVerts = []; polygon = []; line = []; route = [];
+    applyModeUI();
     setPolygonData(map); setRouteData(map);
     map.doubleClickZoom.disable();
     map.getCanvas().style.cursor = "crosshair";
@@ -471,13 +533,16 @@ ${pts}
     map.doubleClickZoom.enable();
     map.getCanvas().style.cursor = "";
     setGhost(map);
-    if (drawVerts.length >= 3) {
-      polygon = drawVerts.slice();
+    const min = mode === "line" ? 2 : 3;
+    if (drawVerts.length >= min) {
+      if (mode === "line") line = drawVerts.slice();
+      else polygon = drawVerts.slice();
       setPolygonData(map);
       regenerate(map);
     } else {
       drawVerts = []; setPolygonData(map);
     }
+    applyModeUI();
   }
 
   // --- public API ----------------------------------------------------------
@@ -487,15 +552,18 @@ ${pts}
     const panel = document.getElementById("plan-panel");
     panel.hidden = false;
     document.getElementById("plan-close").onclick = () => close(map);
-    document.getElementById("plan-draw").onclick = () => startDraw(map);
+    document.getElementById("plan-draw").onclick = () => startDraw(map, "polygon");
+    document.getElementById("plan-draw-line").onclick = () => startDraw(map, "line");
     document.getElementById("plan-clear").onclick = () => {
-      drawVerts = []; polygon = []; route = [];
+      drawVerts = []; polygon = []; line = []; route = [];
       setPolygonData(map); setRouteData(map); setGhost(map);
+      applyModeUI();
       document.getElementById("plan-summary").textContent = "—";
       document.getElementById("plan-download").disabled = true;
     };
     document.getElementById("plan-spacing").oninput = () => regenerate(map);
     setupCompass(map);
+    applyModeUI();
     document.getElementById("plan-download").onclick = () => {
       const name = document.getElementById("plan-name").value || "survey";
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -515,7 +583,7 @@ ${pts}
       map.doubleClickZoom.enable();
       map.getCanvas().style.cursor = "";
     }
-    drawVerts = []; polygon = []; route = [];
+    drawVerts = []; polygon = []; line = []; route = [];
     if (map.getSource("plan-poly")) setPolygonData(map);
     if (map.getSource("plan-route")) setRouteData(map);
     if (map.getSource("plan-ghost")) setGhost(map);

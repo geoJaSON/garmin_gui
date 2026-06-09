@@ -116,6 +116,8 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
   font-size: 12px; background: #f1f5f9; color: #334155;
 }
 #plan-panel button:hover { background: #e2e8f0; }
+#plan-panel button.active { background: #ef4444; color: #fff; }
+#plan-panel button.active:hover { background: #dc2626; }
 #plan-panel #plan-download {
   width: 100%; margin-top: 6px; background: #16a34a; color: #fff;
   font-weight: 600; padding: 9px;
@@ -264,6 +266,44 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, sans-serif; colo
 #topbar #files-toggle:hover,
 #topbar #logout:hover {
   background: #e2e8f0; color: #0f172a;
+}
+#topbar #select-toggle {
+  background: #ede9fe; color: #5b21b6; font-weight: 700;
+}
+#topbar #select-toggle:hover { background: #ddd6fe; color: #4c1d95; }
+#topbar #select-toggle.is-on { background: #6d28d9; color: #fff; }
+
+/* Batch track-selection toolbar (top-center, only in select mode) */
+#track-select-bar {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 7; display: flex; gap: 8px; align-items: center;
+  background: rgba(255,255,255,.97); padding: 8px 12px; border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(15,23,42,.2);
+  border: 1px solid rgba(148,163,184,.3); backdrop-filter: blur(10px);
+  max-width: calc(100vw - 28px); flex-wrap: wrap;
+}
+#track-select-bar #track-select-count {
+  font-weight: 700; color: #5b21b6; font-size: 13px; white-space: nowrap;
+}
+#track-select-bar button {
+  font-size: 12px; border: 0; border-radius: 999px; padding: 6px 11px;
+  cursor: pointer; background: #f1f5f9; color: #334155;
+}
+#track-select-bar button:hover { background: #e2e8f0; }
+#track-select-bar button:disabled { opacity: .5; cursor: default; }
+#track-select-bar #track-select-ignore { background: #fee2e2; color: #991b1b; }
+#track-select-bar #track-select-ignore:hover:enabled { background: #fecaca; }
+#track-select-bar #track-select-include { background: #dcfce7; color: #166534; }
+#track-select-bar #track-select-include:hover:enabled { background: #bbf7d0; }
+#track-select-bar button.primary { background: #6d28d9; color: #fff; font-weight: 600; }
+#track-select-bar button.primary:hover { background: #5b21b6; }
+#track-select-bar .hint {
+  font-size: 11px; color: #64748b; white-space: nowrap;
+}
+.track-select-box {
+  position: absolute; top: 0; left: 0; z-index: 3; pointer-events: none;
+  background: rgba(109,40,217,.12); border: 1.5px dashed #6d28d9;
+  border-radius: 2px; will-change: transform, width, height;
 }
 #layers-box {
   position: absolute; top: 64px; left: 14px; z-index: 6;

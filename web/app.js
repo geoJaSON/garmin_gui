@@ -101,7 +101,7 @@ function bboxOf(geojson) {
   return maxX >= minX ? [[minX, minY], [maxX, maxY]] : null;
 }
 
-async function loadTracks() {
+async function loadTracks(opts = {}) {
   const [tracks, runs] = await Promise.all([
     api("/api/tracks").then((r) => r.json()),
     api("/api/runs").then((r) => r.json()),
@@ -149,17 +149,21 @@ async function loadTracks() {
       layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": "#f97316", "line-width": 6, "line-opacity": 0.9 },
     });
-    map.on("click", "tracks-line", (e) => selectTrack(e.features[0]));
+    map.on("click", "tracks-line", (e) => {
+      if (selectMode) { toggleTrackSelection(e.features[0]); return; }
+      selectTrack(e.features[0]);
+    });
     map.on("mouseenter", "tracks-line", () => (map.getCanvas().style.cursor = "pointer"));
     map.on("mouseleave", "tracks-line", () => (map.getCanvas().style.cursor = ""));
   }
   applyTrackVisibility();
   raiseAreaLayers();
+  if (selectMode) applySelectionHighlight();
 
   const bb = bboxOf(tracks);
   const n = (tracks.features || []).length;
   $("status").textContent = n ? `${n} track(s)` : "no tracks yet — run the inventory";
-  if (bb) map.fitBounds(bb, { padding: 60, duration: 0 });
+  if (bb && opts.fit !== false) map.fitBounds(bb, { padding: 60, duration: 0 });
   initDateSlider();
   applyDateFilter();
   return tracks;
@@ -495,6 +499,160 @@ $("panel-close").onclick = () => {
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], "__none__"]);
 };
 
+// --- batch track selection (ignore/include many tracks at once) ---------
+let selectMode = false;
+const selectedTracks = new Set();      // file_name strings
+
+function applySelectionHighlight() {
+  if (!map.getLayer("tracks-sel")) return;
+  map.setFilter("tracks-sel",
+    ["in", ["get", "file_name"], ["literal", Array.from(selectedTracks)]]);
+}
+
+function updateSelectBar() {
+  const n = selectedTracks.size;
+  $("track-select-count").textContent =
+    n === 1 ? "1 selected" : `${n} selected`;
+  const disabled = n === 0;
+  for (const id of ["track-select-ignore", "track-select-include",
+                    "track-select-clear"]) {
+    $(id).disabled = disabled;
+  }
+}
+
+function toggleTrackSelection(feature) {
+  const name = (feature.properties || {}).file_name;
+  if (!name) return;
+  if (selectedTracks.has(name)) selectedTracks.delete(name);
+  else selectedTracks.add(name);
+  applySelectionHighlight();
+  updateSelectBar();
+}
+
+function enterSelectMode() {
+  if (selectMode) return;
+  selectMode = true;
+  selectedTracks.clear();
+  map.boxZoom.disable();   // free up shift-drag for box-select
+  // Make sure tracks are visible to pick them; clear single-track panel.
+  if (!tracksVisible) { tracksVisible = true; applyTrackVisibility(); }
+  $("panel").hidden = true;
+  removeCog();
+  selectedAreaId = null;
+  $("select-toggle").textContent = "Selecting…";
+  $("select-toggle").classList.add("is-on");
+  $("track-select-bar").hidden = false;
+  applySelectionHighlight();
+  updateSelectBar();
+  $("status").textContent = "select mode — click tracks or shift-drag a box";
+}
+
+function exitSelectMode() {
+  if (!selectMode) return;
+  selectMode = false;
+  selectedTracks.clear();
+  map.boxZoom.enable();
+  $("select-toggle").textContent = "Select tracks";
+  $("select-toggle").classList.remove("is-on");
+  $("track-select-bar").hidden = true;
+  if (map.getLayer("tracks-sel"))
+    map.setFilter("tracks-sel", ["==", ["get", "file_name"], "__none__"]);
+}
+
+function selectTracksInView() {
+  const feats = map.queryRenderedFeatures({ layers: ["tracks-line"] });
+  for (const f of feats) {
+    const nm = (f.properties || {}).file_name;
+    if (nm) selectedTracks.add(nm);
+  }
+  applySelectionHighlight();
+  updateSelectBar();
+}
+
+async function batchSetMosaicIgnore(ignore) {
+  const names = Array.from(selectedTracks);
+  if (!names.length) return;
+  const r = await api("/api/tracks/mosaic_ignore", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file_names: names, mosaic_ignore: ignore }),
+  });
+  if (!r.ok) { alert("batch track update failed"); return; }
+  const j = await r.json();
+  $("status").textContent =
+    `${j.updated} track(s) ${ignore ? "ignored" : "included"} for future mosaics`;
+  // Refresh styling (gray vs blue) without yanking the user's current view.
+  await loadTracks({ fit: false });
+  applySelectionHighlight();
+  updateSelectBar();
+}
+
+// Shift-drag a rubber-band box to add every track it touches. Plain drag
+// still pans the map, so the box only arms while Shift is held.
+function bindBoxSelect() {
+  const container = map.getCanvasContainer();
+  let start = null, boxEl = null;
+  const ptOf = (e) => {
+    const rect = container.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+  const onMove = (e) => {
+    const cur = ptOf(e);
+    if (!boxEl) {
+      boxEl = document.createElement("div");
+      boxEl.className = "track-select-box";
+      container.appendChild(boxEl);
+    }
+    const minX = Math.min(start.x, cur.x), maxX = Math.max(start.x, cur.x);
+    const minY = Math.min(start.y, cur.y), maxY = Math.max(start.y, cur.y);
+    boxEl.style.transform = `translate(${minX}px, ${minY}px)`;
+    boxEl.style.width = (maxX - minX) + "px";
+    boxEl.style.height = (maxY - minY) + "px";
+  };
+  const onUp = (e) => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    map.dragPan.enable();
+    if (boxEl) { boxEl.remove(); boxEl = null; }
+    const s = start; start = null;
+    if (!s) return;
+    const end = ptOf(e);
+    if (Math.abs(end.x - s.x) < 3 && Math.abs(end.y - s.y) < 3) return;
+    const bbox = [
+      [Math.min(s.x, end.x), Math.min(s.y, end.y)],
+      [Math.max(s.x, end.x), Math.max(s.y, end.y)],
+    ];
+    const feats = map.queryRenderedFeatures(bbox, { layers: ["tracks-line"] });
+    for (const f of feats) {
+      const nm = (f.properties || {}).file_name;
+      if (nm) selectedTracks.add(nm);
+    }
+    applySelectionHighlight();
+    updateSelectBar();
+  };
+  container.addEventListener("mousedown", (e) => {
+    if (!selectMode || !e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    map.dragPan.disable();
+    start = ptOf(e);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  });
+}
+bindBoxSelect();
+
+$("select-toggle").onclick = () =>
+  selectMode ? exitSelectMode() : enterSelectMode();
+$("track-select-done").onclick = exitSelectMode;
+$("track-select-clear").onclick = () => {
+  selectedTracks.clear();
+  applySelectionHighlight();
+  updateSelectBar();
+};
+$("track-select-inview").onclick = selectTracksInView;
+$("track-select-ignore").onclick = () => batchSetMosaicIgnore(true);
+$("track-select-include").onclick = () => batchSetMosaicIgnore(false);
+
 // --- auth ----------------------------------------------------------------
 async function boot() {
   const me = await api("/api/me").then((r) => r.json());
@@ -503,6 +661,7 @@ async function boot() {
   $("logout").hidden = false;
   $("data-toggle").hidden = false;
   $("tracks-toggle").hidden = false;
+  $("select-toggle").hidden = false;
   $("new-run").hidden = false;
   $("all-mosaics-toggle").hidden = false;
   $("files-toggle").hidden = false;

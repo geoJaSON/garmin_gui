@@ -579,6 +579,38 @@ async def api_tracks_upload(file: UploadFile = File(...)):
     return {"ok": True, "features": len(payload.get("features", []))}
 
 
+@app.post("/api/tracks/mosaic_ignore", dependencies=[AuthDep])
+async def api_tracks_bulk_ignore(request: Request):
+    """Set mosaic_ignore on many tracks in one write (batch ignore/include).
+
+    Body: {"file_names": [...], "mosaic_ignore": true|false}. Lets the UI
+    flip a whole selection at once instead of one PATCH per track (each of
+    which would rewrite the entire inventory file)."""
+    body = await request.json()
+    names = body.get("file_names")
+    if not isinstance(names, list) or not names:
+        raise HTTPException(400, "file_names must be a non-empty list")
+    ignore = bool(body.get("mosaic_ignore"))
+    name_set = {str(n) for n in names}
+    inv = TRACKS_DIR / "rsd_tracks.geojson"
+    if not inv.exists():
+        raise HTTPException(404, "no inventory on disk")
+    fc = json.loads(inv.read_text())
+    changed = 0
+    matched: set[str] = set()
+    for f in fc.get("features", []):
+        props = f.setdefault("properties", {})
+        if props.get("file_name") in name_set:
+            props["mosaic_ignore"] = ignore
+            changed += 1
+            matched.add(props.get("file_name"))
+    if not changed:
+        raise HTTPException(404, "no matching tracks in inventory")
+    inv.write_text(json.dumps(fc))
+    return {"ok": True, "updated": changed,
+            "files": sorted(matched), "mosaic_ignore": ignore}
+
+
 @app.patch("/api/tracks/{file_name}", dependencies=[AuthDep])
 async def api_track_patch(file_name: str, request: Request):
     """Update per-track inventory flags without touching runs or RSD files."""
