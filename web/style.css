@@ -475,3 +475,10 @@ button.warn:hover { background: #d97706; }
     text-align: center; padding: 8px 10px;
   }
 }
+
+/* swath footprint preview (new-run drawer) */
+#swath-tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 10px 0;
+}
+#swath-tools #swath-status { font-size: 12px; flex-basis: 100%; }

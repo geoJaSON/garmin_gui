@@ -18,6 +18,7 @@ DATA_DIR = Path(os.environ.get("GARMIN_GUI_DATA_DIR", "./data")).expanduser().re
 SHARED_PASSWORD = os.environ.get("GARMIN_GUI_PASSWORD") or ""
 
 # Session cookie signing key. Set in production so logins survive restarts.
+SECRET_FROM_ENV = bool(os.environ.get("GARMIN_GUI_SECRET"))
 SECRET_KEY = os.environ.get("GARMIN_GUI_SECRET") or secrets.token_urlsafe(32)
 
 # Python used to launch isolated job subprocesses (defaults to this venv).

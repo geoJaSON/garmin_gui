@@ -107,6 +107,12 @@ class MosaicConfig:
     # --- Ping-to-ping leveling ---
     APPLY_ROW_BALANCE: bool = False
 
+    # --- Port/starboard leveling ---
+    # EGN normalizes each side independently, which can leave the two halves
+    # at different overall levels (a brightness step along the nadir line).
+    # This scales starboard to port's median before the merged paint.
+    APPLY_SIDE_BALANCE: bool = True
+
     # --- Output selection ---
     # intensity.tif is always written. The per-side and texture rasters are
     # rarely used downstream, so they default OFF (saves write time + disk).

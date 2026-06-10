@@ -3,8 +3,19 @@
 // --- tiny API helper -----------------------------------------------------
 // cache:"no-store" so the browser never replays a stale API response
 // (e.g. a pre-login /api/me) regardless of what's already in its cache.
+// A 401 means the session expired: surface the login screen and reject,
+// so callers don't parse the {"detail": ...} error body as data and
+// render a convincing-but-empty app.
 const api = (path, opts) =>
-  fetch(path, Object.assign({ credentials: "same-origin", cache: "no-store" }, opts));
+  fetch(path, Object.assign({ credentials: "same-origin", cache: "no-store" }, opts))
+    .then((r) => {
+      if (r.status === 401 && path !== "/api/login") {
+        $("login").hidden = false;
+        $("status").textContent = "session expired — log in again";
+        throw new Error("not authenticated");
+      }
+      return r;
+    });
 const $ = (id) => document.getElementById(id);
 
 // --- map -----------------------------------------------------------------
@@ -215,17 +226,29 @@ function decorateTracksWithDates(tracks) {
 // Default: hide tracks older than this date on first load. Falls back to
 // full range automatically if every track is older than the cutoff.
 const DEFAULT_MIN_DATE_EPOCH = Date.UTC(2026, 0, 1) / 86400000;
+let _sliderRangeKey = null;
 
 function initDateSlider() {
   const wrap = $("date-filter");
   if (_trackDateMin == null || _trackDateMax == null ||
       _trackDateMin === _trackDateMax) {
     wrap.hidden = true;
+    _sliderRangeKey = null;
     return;
   }
   wrap.hidden = false;
   const span = _trackDateMax - _trackDateMin;
   const from = $("date-from"), to = $("date-to");
+  // loadTracks() re-runs this after every ignore/delete/run — only reset
+  // the handles when the data's date range actually changed, so a reload
+  // doesn't wipe the user's chosen window back to the default.
+  const key = `${_trackDateMin}:${_trackDateMax}`;
+  if (_sliderRangeKey === key) {
+    updateDateLabels();
+    updateDateTrackFill();
+    return;
+  }
+  _sliderRangeKey = key;
   from.min = to.min = 0;
   from.max = to.max = span;
   from.step = to.step = 1;
@@ -297,23 +320,29 @@ $("date-filter-reset").onclick = () => {
 };
 
 // --- track selection -> overlay its mosaic COG ---------------------------
+let selectedTrackName = null;
+
 async function selectTrack(feature) {
   const p = feature.properties || {};
   const name = p.file_name || "(unknown)";
   const ignored = !!p.mosaic_ignore;
   selectedAreaId = null;
+  selectedTrackName = name;
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], name]);
 
   const run = runsByRsd[name];
   const rows = [
     ["File", name],
-    ["Source meta", p.source_meta || p.source_meta_name || "—"],
-    ["Points", p.point_count || p.points || "—"],
+    ["Source meta", p.metadata_source || p.source_meta || "—"],
+    ["Points", p.track_points ?? p.point_count ?? "—"],
     ["Mosaic generation", ignored ? "ignored" : "included"],
   ];
   let extra;
   if (run) {
-    await showCog(run.cog);
+    // Overlay without blocking the panel. The guard keeps a slow tilejson
+    // response for this track from clobbering a quicker later click.
+    showCog(run.cog, () => selectedTrackName === name)
+      .catch(() => { $("status").textContent = "mosaic overlay failed"; });
     extra = `<span class="badge">mosaic available</span>`;
   } else {
     removeCog();
@@ -347,7 +376,7 @@ async function setTrackMosaicIgnore(name, ignore) {
   $("status").textContent = ignore
     ? `${name} ignored for future mosaics`
     : `${name} included in future mosaics`;
-  const fc = await loadTracks();
+  const fc = await loadTracks({ fit: false });
   const feature = (fc.features || []).find((f) =>
     (f.properties || {}).file_name === name);
   if (feature) selectTrack(feature);
@@ -360,7 +389,7 @@ async function deleteTrackOnly(name) {
                       { method: "DELETE" });
   if (!r.ok) { alert("delete failed"); return; }
   $("panel").hidden = true;
-  loadTracks();
+  loadTracks({ fit: false });
 }
 
 async function deleteRsdCascade(name) {
@@ -378,7 +407,7 @@ async function deleteRsdCascade(name) {
     (j.rsd_file ? ", RSD file" : "");
   $("panel").hidden = true;
   removeCog();
-  loadTracks();
+  loadTracks({ fit: false });
   loadLayers();
 }
 
@@ -459,9 +488,14 @@ async function showCog(cogPath, isCurrent = () => true) {
   // endpoint ourselves and use tilejson only for bounds/zoom. Cache-bust
   // so a stale cached tilejson can't feed old bounds.
   const enc = encodeURIComponent(cogPath);
-  const tj = await api(
+  const tjr = await api(
     `/tiles/WebMercatorQuad/tilejson.json?url=${enc}&_=${Date.now()}`
-  ).then((r) => r.json());
+  );
+  if (!tjr.ok) {
+    $("status").textContent = "mosaic tiles unavailable";
+    return;
+  }
+  const tj = await tjr.json();
   if (!isCurrent()) return;
 
   const tileUrl =
@@ -495,6 +529,7 @@ function removeCog() {
 $("panel-close").onclick = () => {
   $("panel").hidden = true;
   selectedAreaId = null;
+  selectedTrackName = null;
   removeCog();
   map.setFilter("tracks-sel", ["==", ["get", "file_name"], "__none__"]);
 };
@@ -539,6 +574,7 @@ function enterSelectMode() {
   $("panel").hidden = true;
   removeCog();
   selectedAreaId = null;
+  selectedTrackName = null;
   $("select-toggle").textContent = "Selecting…";
   $("select-toggle").classList.add("is-on");
   $("track-select-bar").hidden = false;
@@ -655,7 +691,16 @@ $("track-select-include").onclick = () => batchSetMosaicIgnore(false);
 
 // --- auth ----------------------------------------------------------------
 async function boot() {
-  const me = await api("/api/me").then((r) => r.json());
+  let me;
+  try {
+    me = await api("/api/me").then((r) => r.json());
+  } catch {
+    // Server unreachable (restarting?) — show the login box rather than a
+    // blank page; submitting it retries boot().
+    $("login").hidden = false;
+    $("status").textContent = "server unreachable — retry in a moment";
+    return;
+  }
   if (!me.authed) { $("login").hidden = false; return; }
   $("login").hidden = true;
   $("logout").hidden = false;
@@ -674,11 +719,17 @@ async function boot() {
 
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const r = await api("/api/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: $("password").value }),
-  });
+  let r;
+  try {
+    r = await api("/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: $("password").value }),
+    });
+  } catch {
+    $("login-error").hidden = false;
+    return;
+  }
   if (r.ok) { $("login-error").hidden = true; boot(); }
   else $("login-error").hidden = false;
 });
@@ -820,34 +871,68 @@ async function startRun() {
       : `batch done: ${total}/${total} succeeded`;
   $("run-queue").textContent = "";
   btn.disabled = false;
-  loadTracks();
+  loadTracks({ fit: false });
 }
 
-// Promise-based streamJob used by the batch loop: mirrors the drawer's
+const TERMINAL_STATUSES = ["done", "error", "cancelled"];
+
+// Follow a job to a terminal state: SSE while the stream holds, polling
+// fallback when it drops. EventSource.onerror fires on any transient blip
+// (proxy timeout, laptop sleep) while the job keeps running server-side —
+// closing and reporting failure there abandoned live jobs and skipped
+// their completion callbacks. onUpdate(job) fires for every state change,
+// terminal one included; onUpdate(null) means the job vanished (deleted).
+function followJob(jobId, onUpdate) {
+  let finished = false;
+  const finish = (job) => { finished = true; onUpdate(job); };
+  const handle = (job) => {
+    if (finished || !job) return;
+    if (TERMINAL_STATUSES.includes(job.status)) finish(job);
+    else onUpdate(job);
+  };
+  const startPolling = () => {
+    const t = setInterval(async () => {
+      if (finished) { clearInterval(t); return; }
+      let job;
+      try {
+        const r = await api(`/api/jobs/${jobId}`);
+        if (r.status === 404) { clearInterval(t); finish(null); return; }
+        if (!r.ok) return;          // transient — keep polling
+        job = await r.json();
+      } catch { return; }           // transient — keep polling
+      handle(job);
+      if (finished) clearInterval(t);
+    }, 2000);
+  };
+  const es = new EventSource(`/api/jobs/${jobId}/events`);
+  es.onmessage = (ev) => {
+    handle(JSON.parse(ev.data));
+    if (finished) es.close();
+  };
+  es.onerror = () => { es.close(); if (!finished) startPolling(); };
+}
+
+// Promise-based follower used by the batch loop: mirrors the drawer's
 // progress bar/desc onto the currently-running job and resolves true on
-// done, false on error/cancelled. Console-log onError so the user can
+// done, false on error/cancelled. Console-log errors so the user can
 // still see what went wrong.
 function awaitStreamJob(jobId, label) {
   return new Promise((resolve) => {
-    const es = new EventSource(`/api/jobs/${jobId}/events`);
-    es.onmessage = (ev) => {
-      const job = JSON.parse(ev.data);
-      if (!job) return;
+    followJob(jobId, (job) => {
+      if (!job) { resolve(false); return; }
       const p = job.progress;
       if (p && p.pct != null) $("run-bar").style.width = p.pct + "%";
       $("run-desc").textContent =
         job.status === "running"
           ? `${label} — ${p ? `${p.desc} (${p.pct ?? "?"}%)` : "running…"}`
           : `${label}: ${job.status}`;
-      if (["done", "error", "cancelled"].includes(job.status)) {
-        es.close();
+      if (TERMINAL_STATUSES.includes(job.status)) {
         if (job.status === "error" && job.error) {
           console.warn(`[${label}]`, job.error.split("\n")[0]);
         }
         resolve(job.status === "done");
       }
-    };
-    es.onerror = () => { es.close(); resolve(false); };
+    });
   });
 }
 
@@ -858,10 +943,12 @@ function streamJob(jobId, onDone) {
     $("run-bar").style.width = "0%";
     $("run-desc").textContent = "queued…";
   }
-  const es = new EventSource(`/api/jobs/${jobId}/events`);
-  es.onmessage = (ev) => {
-    const job = JSON.parse(ev.data);
-    if (!job) return;
+  followJob(jobId, (job) => {
+    if (!job) {
+      if (usePanel) $("run-desc").textContent = "job disappeared";
+      else $("status").textContent = "combine: job disappeared";
+      return;
+    }
     const p = job.progress;
     const label = job.status === "running"
       ? (p ? `${p.desc} — ${p.pct ?? "?"}%` : "running…")
@@ -872,14 +959,13 @@ function streamJob(jobId, onDone) {
     } else {
       $("status").textContent = `combine: ${label}`;
     }
-    if (["done", "error", "cancelled"].includes(job.status)) {
-      es.close();
-      $("run-btn").disabled = false;
+    if (TERMINAL_STATUSES.includes(job.status)) {
+      if (usePanel) $("run-btn").disabled = false;
       if (job.status === "done") {
         if (usePanel) {
           $("run-desc").textContent = "done";
           $("run-bar").style.width = "100%";
-          loadTracks();
+          loadTracks({ fit: false });
         }
         if (onDone) onDone(job);
       } else {
@@ -888,9 +974,109 @@ function streamJob(jobId, onDone) {
         else $("status").textContent = "combine " + msg;
       }
     }
-  };
-  es.onerror = () => { es.close(); $("run-btn").disabled = false; };
+  });
 }
+
+// --- swath footprint preview ---------------------------------------------
+// Draws the predicted port/starboard coverage for the selected RSDs at the
+// ranges typed into the params form (falling back server-side to the
+// recorded range). Translucent fills, so overlapping passes read darker —
+// a lane-planning aid, not true ensonified coverage (nadir gap and slant
+// correction are depth-dependent).
+const SWATH_SRC = "swath-preview";
+
+function clearSwathPreview() {
+  for (const id of [SWATH_SRC + "-fill", SWATH_SRC + "-outline"]) {
+    if (map.getLayer(id)) map.removeLayer(id);
+  }
+  if (map.getSource(SWATH_SRC)) map.removeSource(SWATH_SRC);
+  $("swath-clear").hidden = true;
+  $("swath-status").textContent = "";
+}
+
+async function previewSwath() {
+  const names = [...$("rsd-select").selectedOptions]
+    .map((o) => o.textContent).filter(Boolean);
+  if (!names.length) {
+    $("swath-status").textContent = "select at least one RSD above";
+    return;
+  }
+  const q = new URLSearchParams();
+  const portVal = parseFloat($("p_PORT_MAX_RANGE_OVERRIDE_M")?.value);
+  const starVal = parseFloat($("p_STARBOARD_MAX_RANGE_OVERRIDE_M")?.value);
+  if (!Number.isNaN(portVal)) q.set("port_m", portVal);
+  if (!Number.isNaN(starVal)) q.set("star_m", starVal);
+  const qs = q.toString() ? `?${q}` : "";
+
+  const btn = $("swath-preview");
+  btn.disabled = true;
+  $("swath-status").textContent = "loading…";
+  try {
+    const results = await Promise.allSettled(names.map((n) =>
+      api(`/api/tracks/${encodeURIComponent(n)}/footprint${qs}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))));
+    const feats = results
+      .filter((r) => r.status === "fulfilled")
+      .flatMap((r) => r.value.features || []);
+    const missing = results.length - results.filter((r) => r.status === "fulfilled").length;
+    if (!feats.length) {
+      $("swath-status").textContent =
+        "no tracks in the inventory for that selection — run them once first";
+      return;
+    }
+
+    const fc = { type: "FeatureCollection", features: feats };
+    if (map.getSource(SWATH_SRC)) {
+      map.getSource(SWATH_SRC).setData(fc);
+    } else {
+      // Below the track lines so the centerlines stay visible on top.
+      const beforeId = map.getLayer("tracks-case") ? "tracks-case" : undefined;
+      map.addSource(SWATH_SRC, { type: "geojson", data: fc });
+      map.addLayer({
+        id: SWATH_SRC + "-fill", type: "fill", source: SWATH_SRC,
+        paint: {
+          "fill-color": ["case",
+            ["==", ["get", "side"], "port"], "#dc2626", "#16a34a"],
+          "fill-opacity": 0.22,
+        },
+      }, beforeId);
+      map.addLayer({
+        id: SWATH_SRC + "-outline", type: "line", source: SWATH_SRC,
+        paint: {
+          "line-color": ["case",
+            ["==", ["get", "side"], "port"], "#dc2626", "#16a34a"],
+          "line-width": 1,
+          "line-opacity": 0.6,
+        },
+      }, beforeId);
+    }
+
+    let bb = null;
+    for (const f of feats) {
+      const b = geomBBox(f.geometry);
+      if (!b) continue;
+      bb = bb ? [[Math.min(bb[0][0], b[0][0]), Math.min(bb[0][1], b[0][1])],
+                 [Math.max(bb[1][0], b[1][0]), Math.max(bb[1][1], b[1][1])]] : b;
+    }
+    if (bb) map.fitBounds(bb, { padding: 60 });
+
+    const p = feats.find((f) => f.properties.side === "port");
+    const s = feats.find((f) => f.properties.side === "star");
+    $("swath-status").textContent =
+      `${names.length - missing} track(s) — port ${p ? p.properties.range_m : "?"} m / ` +
+      `star ${s ? s.properties.range_m : "?"} m` +
+      (missing ? ` · ${missing} not in inventory` : "") +
+      ` (red=port, green=starboard; darker = overlap)`;
+    $("swath-clear").hidden = false;
+  } catch {
+    $("swath-status").textContent = "preview failed";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("swath-preview").onclick = previewSwath;
+$("swath-clear").onclick = clearSwathPreview;
 
 $("new-run").onclick = openDrawer;
 $("drawer-close").onclick = () => ($("drawer").hidden = true);
@@ -986,7 +1172,7 @@ async function loadQueueTable() {
     tr.innerHTML = `
       <td>${j.kind}</td>
       <td class="item">${escapeHtml(jobLabel(j))}
-        ${j.error ? `<br><small style="color:#b91c1c">${escapeHtml(j.error.split("\\n")[0])}</small>` : ""}</td>
+        ${j.error ? `<br><small style="color:#b91c1c">${escapeHtml(j.error.split("\n")[0])}</small>` : ""}</td>
       <td><span class="pill ${j.status}">${j.status}</span></td>
       <td>${bar}</td>
       <td>${when}</td>
@@ -1111,6 +1297,7 @@ async function selectArea(feature) {
   const pr = feature.properties || {};
   const id = pr.id;
   selectedAreaId = id;
+  selectedTrackName = null;
   $("panel-title").textContent = pr.Our_Name || "Area";
   $("panel-body").innerHTML = "loading coverage…";
   $("panel").hidden = false;
@@ -1212,9 +1399,16 @@ async function toggleAreaMosaic(row, show) {
   }
 
   const enc = encodeURIComponent(cog);
-  const tj = await api(
+  const tjr = await api(
     `/tiles/WebMercatorQuad/tilejson.json?url=${enc}&_=${Date.now()}`
-  ).then((r) => r.json());
+  );
+  if (!tjr.ok) {
+    activeAreaMosaics.delete(row.id);
+    $("status").textContent = "area mosaic tiles unavailable";
+    updateMosaicControls();
+    return;
+  }
+  const tj = await tjr.json();
   if (!activeAreaMosaics.has(row.id)) return;
   const tileUrl =
     `${location.origin}/tiles/tiles/WebMercatorQuad/{z}/{x}/{y}` +
@@ -1245,29 +1439,29 @@ async function toggleAreaMosaic(row, show) {
 async function toggleAllAreaMosaics() {
   const btn = $("all-mosaics-toggle");
   btn.disabled = true;
+  // try/finally + allSettled: one failed tilejson fetch must not leave the
+  // button permanently disabled or stop the other mosaics from loading.
+  try {
+    const rows = await api("/api/areas").then((r) => r.json());
+    const readyRows = rows.filter((r) => r.has_mosaic && r.mosaic_job_id);
+    readyAreaMosaicIds = new Set(readyRows.map((r) => r.id));
+    if (!readyRows.length) {
+      $("status").textContent = "no ready mosaics yet";
+      return;
+    }
 
-  const rows = await api("/api/areas").then((r) => r.json());
-  const readyRows = rows.filter((r) => r.has_mosaic && r.mosaic_job_id);
-  readyAreaMosaicIds = new Set(readyRows.map((r) => r.id));
-  if (!readyRows.length) {
-    $("status").textContent = "no ready mosaics yet";
+    const show = !readyRows.every((r) => activeAreaMosaics.has(r.id));
+    btn.textContent = show ? "Loading mosaics..." : "Hiding mosaics...";
+    await Promise.allSettled(readyRows.map((r) => toggleAreaMosaic(r, show)));
+    $("status").textContent = show
+      ? `showing ${readyRows.length} mosaic(s)`
+      : "all mosaics hidden";
+  } catch {
+    $("status").textContent = "mosaic toggle failed";
+  } finally {
     btn.disabled = false;
     updateMosaicControls();
-    return;
   }
-
-  const show = !readyRows.every((r) => activeAreaMosaics.has(r.id));
-  btn.textContent = show ? "Loading mosaics..." : "Hiding mosaics...";
-  if (show) {
-    await Promise.all(readyRows.map((r) => toggleAreaMosaic(r, true)));
-    $("status").textContent = `showing ${readyRows.length} mosaic(s)`;
-  } else {
-    await Promise.all(readyRows.map((r) => toggleAreaMosaic(r, false)));
-    $("status").textContent = "all mosaics hidden";
-  }
-
-  btn.disabled = false;
-  updateMosaicControls();
 }
 
 async function uploadAreas(file) {
@@ -1341,8 +1535,13 @@ async function loadDataTable() {
     if (mosaicToggle) {
       mosaicToggle.onclick = async () => {
         mosaicToggle.disabled = true;
-        await toggleAreaMosaic(a, !activeAreaMosaics.has(a.id));
-        mosaicToggle.disabled = false;
+        try {
+          await toggleAreaMosaic(a, !activeAreaMosaics.has(a.id));
+        } catch {
+          $("status").textContent = "area mosaic failed to load";
+        } finally {
+          mosaicToggle.disabled = false;
+        }
       };
     }
     tr.querySelector(".view").onclick = () => viewArea(a);
@@ -1519,7 +1718,7 @@ async function filesAction(d) {
   const r = await api(url, { method });
   if (!r.ok) { alert(`delete failed: ${desc}`); return; }
   await loadFilesTable();
-  loadTracks();
+  loadTracks({ fit: false });
   loadLayers();
 }
 

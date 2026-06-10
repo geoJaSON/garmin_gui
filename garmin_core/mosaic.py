@@ -829,6 +829,8 @@ def process_side(rsd_handle, meta_df, side_name, sign, transformer=None, payload
     skipped_slow = 0
     skipped_no_nav = 0
     skipped_decode = 0
+    skipped_error = 0
+    first_error = None
 
     for idx, row in tqdm(meta_df.iterrows(), total=len(meta_df), desc="Reading"):
         if pd.isna(row['index']) or pd.isna(row['data_size']):
@@ -904,7 +906,11 @@ def process_side(rsd_handle, meta_df, side_name, sign, transformer=None, payload
                 corrected_intensities = raw_intensities.astype(np.float32)
 
             # Slant range -> ground range correction with nadir masking
-            depth = row['inst_dep_m'] if pd.notna(row['inst_dep_m']) else 1.0
+            # (.get: a metadata CSV without inst_dep_m must not KeyError
+            # every ping into the blanket except below — that silently
+            # empties the whole run.)
+            depth_raw = row.get('inst_dep_m')
+            depth = float(depth_raw) if pd.notna(depth_raw) else 1.0
             corrected = slant_range_correction(
                 corrected_intensities, depth, ping_max_range,
                 OUTPUT_RESOLUTION, NADIR_MASK_BINS)
@@ -919,7 +925,10 @@ def process_side(rsd_handle, meta_df, side_name, sign, transformer=None, payload
                 x_nav, y_nav, h_nav = nav_point
                 nav_data.append((x_nav, y_nav, (h_nav + heading_offset_deg) % 360.0))
 
-        except Exception:
+        except Exception as exc:
+            skipped_error += 1
+            if first_error is None:
+                first_error = f"{type(exc).__name__}: {exc}"
             continue
 
     if skipped_slow > 0:
@@ -928,6 +937,8 @@ def process_side(rsd_handle, meta_df, side_name, sign, transformer=None, payload
         print(f"  Skipped {skipped_no_nav} pings with missing navigation")
     if skipped_decode > 0:
         print(f"  Skipped {skipped_decode} pings that could not decode payload")
+    if skipped_error > 0:
+        print(f"  Skipped {skipped_error} pings on per-ping errors (first: {first_error})")
 
     if not waterfall_rows:
         print("  No valid data found.")
@@ -1198,8 +1209,12 @@ def percentile_stretch(data, low_pct=2, high_pct=98):
         hi = lo + 1
 
     stretched = (stretch_input - lo) / (hi - lo) * 254.0 + 1.0
+    # Clamp valid pixels to [1, 255]: anything below `lo` would otherwise
+    # truncate to 0 — the nodata value — punching transparent holes into
+    # the darkest ~low_pct% of real seabed.
+    stretched = np.clip(stretched, 1.0, 255.0)
     stretched = np.where(stretch_input > 0, stretched, 0)
-    return np.clip(stretched, 0, 255).astype(np.uint8)
+    return stretched.astype(np.uint8)
 
 
 def fill_raster_gaps(raster, passes=3):
@@ -1387,6 +1402,35 @@ def save_geotiff(data, nav_data, side_sign, pixel_size, filename,
         dst.write(output, 1)
 
 
+def match_side_levels(port_data, star_data, gain_min=0.5, gain_max=2.0):
+    """Scale starboard rows so both sides sit at the same median level.
+
+    EGN normalizes each side independently, so port and starboard can land
+    at different overall levels and draw a brightness step along the nadir
+    line of the merged mosaic. Only the port/star RATIO matters here — the
+    final percentile stretch renormalizes overall level — so port is left
+    untouched and starboard gets one clamped multiplicative gain.
+
+    Returns the (possibly rescaled) star_data.
+    """
+    def side_median(rows):
+        step = max(1, len(rows) // 2000)
+        vals = [r[r > 0] for r in rows[::step]]
+        vals = np.concatenate(vals) if vals else np.array([], dtype=np.float32)
+        return float(np.median(vals)) if vals.size else None
+
+    pm = side_median(port_data)
+    sm = side_median(star_data)
+    if not pm or not sm:
+        return star_data
+    gain = float(np.clip(pm / sm, gain_min, gain_max))
+    if abs(gain - 1.0) < 0.01:
+        return star_data
+    print(f"  Side balance: starboard x{gain:.3f} "
+          f"(port median {pm:.1f}, starboard median {sm:.1f})")
+    return [r * gain for r in star_data]
+
+
 def save_merged_geotiff(port_data, port_nav, star_data, star_nav,
                         pixel_size, filename, raster_crs=None, transformer=None,
                         downscan_nadir=None):
@@ -1399,6 +1443,9 @@ def save_merged_geotiff(port_data, port_nav, star_data, star_nav,
     """
     if port_data is None and star_data is None:
         return
+    if (APPLY_SIDE_BALANCE and port_data is not None and star_data is not None
+            and len(port_data) and len(star_data)):
+        star_data = match_side_levels(port_data, star_data)
     print(f"  Mapping merged mosaic to {filename}...")
 
     # Project all nav data

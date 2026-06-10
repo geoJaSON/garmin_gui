@@ -23,6 +23,7 @@ import pandas as pd
 from pyproj import Transformer
 
 from .config import TracksConfig
+from .locking import locked
 
 def get_output_paths(rsd_file: Path):
     rsd_basename = rsd_file.stem
@@ -433,10 +434,10 @@ def load_existing_features(output_path: Path):
     try:
         payload = json.loads(output_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"Existing output is not valid JSON: {output_path} ({exc})") from exc
+        raise ValueError(f"Existing output is not valid JSON: {output_path} ({exc})") from exc
 
     if payload.get("type") != "FeatureCollection":
-        raise SystemExit(f"Existing output is not a GeoJSON FeatureCollection: {output_path}")
+        raise ValueError(f"Existing output is not a GeoJSON FeatureCollection: {output_path}")
 
     seen_paths = set()
     features = []
@@ -462,8 +463,9 @@ def write_feature_collection(output_path: Path, features):
         "features": features,
     }
     temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    temp_path.write_text(json.dumps(geojson, indent=2), encoding="utf-8")
-    temp_path.replace(output_path)
+    with locked(output_path):
+        temp_path.write_text(json.dumps(geojson, indent=2), encoding="utf-8")
+        temp_path.replace(output_path)
 
 
 def find_rsd_files(input_folder: Path, recursive: bool):

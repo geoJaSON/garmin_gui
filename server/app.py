@@ -11,12 +11,13 @@ import dataclasses
 import json
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from garmin_core.config import MosaicConfig
+from garmin_core.locking import locked
 from . import db, jobs
 from .auth import AuthDep, is_authed, login, logout, password_ok
 from .settings import (
@@ -24,6 +25,7 @@ from .settings import (
     POLYGONS_DIR,
     RSD_DIR,
     RUNS_DIR,
+    SECRET_FROM_ENV,
     SECRET_KEY,
     SHARED_PASSWORD,
     TRACKS_DIR,
@@ -62,6 +64,9 @@ def _startup() -> None:
     jobs.start_worker()
     if not SHARED_PASSWORD:
         print("!! GARMIN_GUI_PASSWORD is unset — the app is OPEN. Set it in prod.")
+    if SHARED_PASSWORD and not SECRET_FROM_ENV:
+        print("!! GARMIN_GUI_SECRET is unset — session cookies rotate on every "
+              "restart, logging everyone out. Set it in prod.")
 
 
 def _migrate_legacy_layer_file() -> None:
@@ -175,8 +180,14 @@ async def submit_mosaic(request: Request):
     body = await request.json()
     if not body.get("rsd_path"):
         raise HTTPException(400, "rsd_path required")
+    # Client-supplied path that the worker will stage and process — accept
+    # only uploaded RSDs, not arbitrary server paths.
+    rsd = Path(str(body["rsd_path"])).expanduser().resolve()
+    if not (rsd.suffix.lower() == ".rsd" and rsd.is_file()
+            and rsd.is_relative_to(RSD_DIR)):
+        raise HTTPException(400, "rsd_path must be an uploaded .RSD file")
     job_id = jobs.enqueue("mosaic", {
-        "rsd_path": body["rsd_path"],
+        "rsd_path": str(rsd),
         "config": body.get("config") or {},
     })
     return {"job_id": job_id}
@@ -210,7 +221,8 @@ async def submit_combine(request: Request):
     if not run_ids and not polygon and not area:
         raise HTTPException(400, "need run_ids, polygon, or area")
     job_id = jobs.enqueue(
-        "combine", {"run_ids": run_ids, "polygon": polygon, "area": area}
+        "combine", {"run_ids": run_ids, "polygon": polygon, "area": area,
+                    "blend": body.get("blend")}
     )
     return {"job_id": job_id}
 
@@ -408,8 +420,7 @@ async def api_area_coverage(area_id: str, buffer_m: float = DEFAULT_BUFFER_M):
     if not a or not a.get("geometry"):
         raise HTTPException(404, "no such area")
     clip = prep(buffer_wgs84(a["geometry"], buffer_m))
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    inv_fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
+    inv_fc = _load_inventory()
     tracks, with_mosaic = [], []
     for f in inv_fc.get("features", []):
         if _track_is_ignored(f):
@@ -440,7 +451,8 @@ async def api_area_mosaic(area_id: str, request: Request):
     if not db.get_area(area_id):
         raise HTTPException(404, "no such area")
     job_id = jobs.enqueue("combine",
-                           {"area_id": area_id, "buffer_m": buffer_m})
+                           {"area_id": area_id, "buffer_m": buffer_m,
+                            "blend": body.get("blend")})
     return {"job_id": job_id, "buffer_m": buffer_m}
 
 
@@ -484,7 +496,7 @@ async def api_deliverable_metadata(job_id: str):
 # ---- job status ---------------------------------------------------------
 @app.get("/api/jobs", dependencies=[AuthDep])
 async def api_jobs():
-    return jobs and db.list_jobs()
+    return db.list_jobs()
 
 
 @app.get("/api/jobs/{job_id}", dependencies=[AuthDep])
@@ -510,6 +522,26 @@ async def api_job_events(job_id: str):
             await asyncio.sleep(1.0)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ---- track inventory helpers ---------------------------------------------
+# The inventory is one shared geojson mutated by several handlers AND by job
+# subprocesses (post-mosaic track append). Every read-modify-write cycle must
+# run inside `with locked(_INV)`, and all writes go through _save_inventory:
+# temp-file + os.replace so a crash can't truncate the file mid-write.
+_INV = TRACKS_DIR / "rsd_tracks.geojson"
+
+
+def _load_inventory() -> dict:
+    if not _INV.exists():
+        return {"type": "FeatureCollection", "features": []}
+    return json.loads(_INV.read_text())
+
+
+def _save_inventory(fc: dict) -> None:
+    tmp = _INV.with_suffix(_INV.suffix + ".tmp")
+    tmp.write_text(json.dumps(fc))
+    tmp.replace(_INV)
 
 
 # ---- result discovery ---------------------------------------------------
@@ -556,13 +588,67 @@ async def api_track_metadata(file_name: str):
     raise HTTPException(404, "no metadata available for this RSD")
 
 
+@app.get("/api/tracks/{file_name}/footprint", dependencies=[AuthDep])
+async def api_track_footprint(file_name: str,
+                              port_m: float = Query(None, gt=0, le=500),
+                              star_m: float = Query(None, gt=0, le=500)):
+    """Predicted swath footprint: port/starboard polygons around the track.
+
+    A geometric preview (GPS line buffered by the per-side range) for lane
+    planning before re-running a mosaic — NOT true ensonified coverage:
+    the real mosaic loses a depth-dependent strip at nadir, and slant
+    correction shortens the far edge over deep water.
+
+    When a side's range isn't supplied, falls back to the run's recorded
+    mean range from the metadata snapshot, then to 15 m. Each feature's
+    properties say which source was used.
+    """
+    from shapely.geometry import mapping
+    from .geo import swath_wgs84
+
+    feature = next(
+        (f for f in _load_inventory().get("features", [])
+         if (f.get("properties") or {}).get("file_name") == file_name
+         and f.get("geometry")),
+        None,
+    )
+    if feature is None:
+        raise HTTPException(404, "no track in inventory for this RSD")
+
+    src = {"port": "requested", "star": "requested"}
+    if port_m is None or star_m is None:
+        run = db.find_done_mosaic_by_rsd(file_name)
+        rng = (((run or {}).get("result") or {}).get("meta") or {}).get("range_m") or {}
+        try:
+            recorded = float(rng["mean"]) if rng.get("mean") is not None else None
+        except (TypeError, ValueError):
+            recorded = None
+        if port_m is None:
+            port_m, src["port"] = (recorded, "recorded") if recorded else (15.0, "default")
+        if star_m is None:
+            star_m, src["star"] = (recorded, "recorded") if recorded else (15.0, "default")
+
+    port_geom, star_geom = swath_wgs84(feature["geometry"],
+                                       float(port_m), float(star_m))
+    feats = []
+    for side, geom, rng_m in (("port", port_geom, port_m),
+                              ("star", star_geom, star_m)):
+        if geom is None or geom.is_empty:
+            continue
+        feats.append({
+            "type": "Feature",
+            "properties": {"file_name": file_name, "side": side,
+                           "range_m": round(float(rng_m), 2),
+                           "range_source": src[side]},
+            "geometry": mapping(geom),
+        })
+    return {"type": "FeatureCollection", "features": feats}
+
+
 @app.get("/api/tracks", dependencies=[AuthDep])
 async def api_tracks():
     """The track inventory GeoJSON (empty FeatureCollection if none yet)."""
-    gj = TRACKS_DIR / "rsd_tracks.geojson"
-    if not gj.exists():
-        return {"type": "FeatureCollection", "features": []}
-    return json.loads(gj.read_text())
+    return _load_inventory()
 
 
 @app.post("/api/tracks", dependencies=[AuthDep])
@@ -575,7 +661,10 @@ async def api_tracks_upload(file: UploadFile = File(...)):
         raise HTTPException(400, "not valid JSON")
     if payload.get("type") != "FeatureCollection":
         raise HTTPException(400, "expected a GeoJSON FeatureCollection")
-    (TRACKS_DIR / "rsd_tracks.geojson").write_bytes(raw)
+    tmp = _INV.with_suffix(_INV.suffix + ".tmp")
+    with locked(_INV):
+        tmp.write_bytes(raw)
+        tmp.replace(_INV)
     return {"ok": True, "features": len(payload.get("features", []))}
 
 
@@ -592,21 +681,21 @@ async def api_tracks_bulk_ignore(request: Request):
         raise HTTPException(400, "file_names must be a non-empty list")
     ignore = bool(body.get("mosaic_ignore"))
     name_set = {str(n) for n in names}
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    if not inv.exists():
+    if not _INV.exists():
         raise HTTPException(404, "no inventory on disk")
-    fc = json.loads(inv.read_text())
     changed = 0
     matched: set[str] = set()
-    for f in fc.get("features", []):
-        props = f.setdefault("properties", {})
-        if props.get("file_name") in name_set:
-            props["mosaic_ignore"] = ignore
-            changed += 1
-            matched.add(props.get("file_name"))
-    if not changed:
-        raise HTTPException(404, "no matching tracks in inventory")
-    inv.write_text(json.dumps(fc))
+    with locked(_INV):
+        fc = _load_inventory()
+        for f in fc.get("features", []):
+            props = f.setdefault("properties", {})
+            if props.get("file_name") in name_set:
+                props["mosaic_ignore"] = ignore
+                changed += 1
+                matched.add(props.get("file_name"))
+        if not changed:
+            raise HTTPException(404, "no matching tracks in inventory")
+        _save_inventory(fc)
     return {"ok": True, "updated": changed,
             "files": sorted(matched), "mosaic_ignore": ignore}
 
@@ -615,21 +704,21 @@ async def api_tracks_bulk_ignore(request: Request):
 async def api_track_patch(file_name: str, request: Request):
     """Update per-track inventory flags without touching runs or RSD files."""
     body = await request.json()
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    if not inv.exists():
+    if not _INV.exists():
         raise HTTPException(404, "no inventory on disk")
-    fc = json.loads(inv.read_text())
     changed = 0
-    for f in fc.get("features", []):
-        props = f.setdefault("properties", {})
-        if props.get("file_name") != file_name:
-            continue
-        if "mosaic_ignore" in body:
-            props["mosaic_ignore"] = bool(body["mosaic_ignore"])
-            changed += 1
-    if not changed:
-        raise HTTPException(404, "no such track in inventory")
-    inv.write_text(json.dumps(fc))
+    with locked(_INV):
+        fc = _load_inventory()
+        for f in fc.get("features", []):
+            props = f.setdefault("properties", {})
+            if props.get("file_name") != file_name:
+                continue
+            if "mosaic_ignore" in body:
+                props["mosaic_ignore"] = bool(body["mosaic_ignore"])
+                changed += 1
+        if not changed:
+            raise HTTPException(404, "no such track in inventory")
+        _save_inventory(fc)
     return {"ok": True, "updated": changed,
             "mosaic_ignore": bool(body.get("mosaic_ignore"))}
 
@@ -698,16 +787,16 @@ async def api_delete_rsd(name: str):
         rsd_file.unlink()
         removed["rsd_file"] = True
 
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    if inv.exists():
-        fc = json.loads(inv.read_text())
-        before = len(fc.get("features", []))
-        fc["features"] = [
-            f for f in fc.get("features", [])
-            if (f.get("properties") or {}).get("file_name") != name
-        ]
-        removed["track_features"] = before - len(fc["features"])
-        inv.write_text(json.dumps(fc))
+    if _INV.exists():
+        with locked(_INV):
+            fc = _load_inventory()
+            before = len(fc.get("features", []))
+            fc["features"] = [
+                f for f in fc.get("features", [])
+                if (f.get("properties") or {}).get("file_name") != name
+            ]
+            removed["track_features"] = before - len(fc["features"])
+            _save_inventory(fc)
 
     for j in db.find_mosaic_jobs_by_rsd(name):
         rd = RUNS_DIR / j["id"]
@@ -726,19 +815,19 @@ async def api_delete_rsd(name: str):
 @app.delete("/api/tracks/{file_name}", dependencies=[AuthDep])
 async def api_delete_track(file_name: str):
     """Remove ALL inventory entries for this file_name (no run/RSD touch)."""
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    if not inv.exists():
+    if not _INV.exists():
         raise HTTPException(404, "no inventory on disk")
-    fc = json.loads(inv.read_text())
-    before = len(fc.get("features", []))
-    fc["features"] = [
-        f for f in fc.get("features", [])
-        if (f.get("properties") or {}).get("file_name") != file_name
-    ]
-    removed = before - len(fc["features"])
-    if not removed:
-        raise HTTPException(404, "no such track in inventory")
-    inv.write_text(json.dumps(fc))
+    with locked(_INV):
+        fc = _load_inventory()
+        before = len(fc.get("features", []))
+        fc["features"] = [
+            f for f in fc.get("features", [])
+            if (f.get("properties") or {}).get("file_name") != file_name
+        ]
+        removed = before - len(fc["features"])
+        if not removed:
+            raise HTTPException(404, "no such track in inventory")
+        _save_inventory(fc)
     return {"ok": True, "removed": removed}
 
 
@@ -746,24 +835,24 @@ async def api_delete_track(file_name: str):
 async def api_delete_track_at(file_name: str, index: int):
     """Remove ONE inventory entry by 0-based occurrence index among
     features with this file_name. Use this to delete a single duplicate."""
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    if not inv.exists():
+    if not _INV.exists():
         raise HTTPException(404, "no inventory on disk")
-    fc = json.loads(inv.read_text())
-    feats = fc.get("features", [])
-    occurrence = -1
-    target = -1
-    for i, f in enumerate(feats):
-        if (f.get("properties") or {}).get("file_name") == file_name:
-            occurrence += 1
-            if occurrence == index:
-                target = i
-                break
-    if target < 0:
-        raise HTTPException(404, "no such occurrence")
-    feats.pop(target)
-    fc["features"] = feats
-    inv.write_text(json.dumps(fc))
+    with locked(_INV):
+        fc = _load_inventory()
+        feats = fc.get("features", [])
+        occurrence = -1
+        target = -1
+        for i, f in enumerate(feats):
+            if (f.get("properties") or {}).get("file_name") == file_name:
+                occurrence += 1
+                if occurrence == index:
+                    target = i
+                    break
+        if target < 0:
+            raise HTTPException(404, "no such occurrence")
+        feats.pop(target)
+        fc["features"] = feats
+        _save_inventory(fc)
     return {"ok": True, "removed": 1, "remaining": occurrence}
 
 
@@ -801,8 +890,7 @@ async def api_files():
             files[p.name] = {"present": True, "size": p.stat().st_size}
 
     # 2) inventory tracks (keep insertion order so 'index' is meaningful)
-    inv = TRACKS_DIR / "rsd_tracks.geojson"
-    inv_fc = json.loads(inv.read_text()) if inv.exists() else {"features": []}
+    inv_fc = _load_inventory()
     track_groups: dict[str, list] = {}
     for f in inv_fc.get("features", []):
         pr = f.get("properties") or {}
@@ -900,6 +988,25 @@ async def api_mosaics():
 
 
 # ---- COG tiles (TiTiler mounted in-process) -----------------------------
+def _validated_dataset_path(
+    url: str = Query(..., description="COG path under the server data dir"),
+) -> str:
+    """Restrict TiTiler to local rasters inside our data layout.
+
+    The stock factory passes url= straight to GDAL, which happily opens
+    any file on disk or remote /vsicurl/ URLs — a local-file-read/SSRF
+    primitive. Only run/mosaic outputs are ever tiled by this app.
+    """
+    try:
+        p = Path(url).expanduser().resolve()
+    except (OSError, ValueError):
+        raise HTTPException(400, "invalid dataset path")
+    for root in (RUNS_DIR, MOSAICS_DIR):
+        if p.is_file() and p.is_relative_to(root):
+            return str(p)
+    raise HTTPException(400, "dataset must be a raster under the data directory")
+
+
 def _mount_titiler() -> None:
     try:
         from titiler.core.factory import TilerFactory
@@ -910,8 +1017,10 @@ def _mount_titiler() -> None:
     # url_for() builds tilejson tile URLs that actually resolve. Without
     # it, tilejson advertised /tiles/{tms}/{z}/{x}/{y} while the real
     # route was /tiles/tiles/{tms}/{z}/{x}/{y} -> every tile 404'd.
-    tiler = TilerFactory(router_prefix="/tiles")
-    app.include_router(tiler.router, prefix="/tiles", tags=["tiles"])
+    tiler = TilerFactory(router_prefix="/tiles",
+                         path_dependency=_validated_dataset_path)
+    app.include_router(tiler.router, prefix="/tiles", tags=["tiles"],
+                       dependencies=[AuthDep])
 
 
 @app.get("/healthz")

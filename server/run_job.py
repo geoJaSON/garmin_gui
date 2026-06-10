@@ -245,12 +245,33 @@ def _run_combine(job: dict, prog: _Throttle) -> dict:
 
     prog("combine", 0, len(cogs))
     mosaic_dir.mkdir(parents=True, exist_ok=True)
-    if clip is not None:
-        ok = areas_mod.merge_and_clip_rasters([Path(c) for c in cogs], clip, out)
-        mode = "merge+clip"
-    else:
-        ok = areas_mod._merge_rasters([Path(c) for c in cogs], out)
-        mode = "merge"
+
+    # Blended merge (histogram matching + feathered seams) is the default;
+    # params.blend = {enabled, match_strength, feather_m} tunes/disables it.
+    # Any failure (e.g. grid over the size cap) falls back to the plain
+    # legacy merge so deliverables never break on the quality pass.
+    blend_cfg = p.get("blend") or {}
+    cog_paths = [Path(c) for c in cogs]
+    ok, mode = False, None
+    if blend_cfg.get("enabled", True):
+        try:
+            from garmin_core.blend import merge_rasters_blended
+            ok = merge_rasters_blended(
+                cog_paths, out,
+                clip_polygon=clip,
+                match_strength=float(blend_cfg.get("match_strength", 1.0)),
+                feather_m=float(blend_cfg.get("feather_m", 1.5)),
+            )
+            mode = "merge+clip+blend" if clip is not None else "merge+blend"
+        except Exception as e:
+            print(f"  blended merge failed ({e}); falling back to plain merge")
+    if mode is None:
+        if clip is not None:
+            ok = areas_mod.merge_and_clip_rasters(cog_paths, clip, out)
+            mode = "merge+clip"
+        else:
+            ok = areas_mod._merge_rasters(cog_paths, out)
+            mode = "merge"
     prog("combine", len(cogs), len(cogs))
 
     res = {"ok": bool(ok), "mode": mode, "rasters": len(cogs),
